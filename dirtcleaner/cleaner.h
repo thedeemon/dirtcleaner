@@ -31,22 +31,26 @@ public:
 	//void round(MonoBlock<W,float> &a);
 };
 
-
-class Vec
+template<class T>
+class TVec
 {
 public:
-	int x, y;
+	T x, y;
 
-	Vec(int vx, int vy) : x(vx), y(vy) {}
-	Vec() : x(0), y(0) {}	
-	Vec operator+(const Vec &a) const	{	return Vec(x + a.x, y + a.y);	}
-	Vec operator-(const Vec &a) const	{	return Vec(x - a.x, y - a.y);	}
-	Vec& operator+=(const Vec &a)		{	x += a.x; y += a.y;	return *this;	}	
-	Vec plus(const Vec &a)	const	{	return Vec(x + a.x, y + a.y); }
-	Vec& move(const Vec &a)			{	x += a.x; y += a.y;	return *this;	}
-	void print(const char* name)	const	{	printf("%s(%d, %d) ", name, x, y);   }
-	bool operator==(const Vec &a) const { return x==a.x && y==a.y;  }
+	TVec(T vx, T vy) : x(vx), y(vy) {}
+	TVec() : x(0), y(0) {}	
+	TVec operator+(const TVec &a) const	{	return TVec(x + a.x, y + a.y);	}
+	TVec operator-(const TVec &a) const	{	return TVec(x - a.x, y - a.y);	}
+	TVec& operator+=(const TVec &a)		{	x += a.x; y += a.y;	return *this;	}	
+	TVec plus(const TVec &a)	const	{	return TVec(x + a.x, y + a.y); }
+	TVec& move(const TVec &a)			{	x += a.x; y += a.y;	return *this;	}
+	//void print(const char* name)	const	{	printf("%s(%d, %d) ", name, x, y);   }
+	bool operator==(const TVec &a) const { return x==a.x && y==a.y;  }
+	TVec<float> operator*(float k) const { return TVec<float>(x*k, y*k); }
 };
+
+typedef TVec<int> Vec;
+typedef TVec<float> FVec;
 
 class Plane
 {

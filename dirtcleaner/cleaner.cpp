@@ -190,40 +190,63 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst)
 	const int dpitch3 = dst.pitch3;
 
 	const Vec d4(4,4);
+	int ddd;
 	//float ws[4] = {0.5,}
 
 	for(int by=0;by<nby-1;by++) { // todo: proper border handling in last row and last column
 		for(int bx=0;bx<nbx;bx++) {
 			//MonoBlock<8, float> srcBlock;
-			const Vec v0(bx*8, by*8);
+			const Vec bpos(bx*8, by*8);
 			//curFrame.Y.readBlock_f(v0, srcBlock);
-			Vec mv = getMVp(bx, by);
-			Vec v = v0 + mv;
+			//Vec mv = getMVp(bx, by);
+			//Vec v = bpos + mv;
+			Vec bcenter = bpos + d4;
 
 			Vec vecs[8][8];
 			for(int hy=0;hy<2;hy++) {
 				for(int hx=0;hx<2;hx++) {
-					Vec v0 = getMVp(bx-1 + hx, by-1 + hy) + d4; // centers of blocks
-					Vec v1 = getMVp(bx   + hx, by-1 + hy) + d4;
-					Vec v2 = getMVp(bx-1 + hx, by   + hy) + d4;
-					Vec v3 = getMVp(bx   + hx, by   + hy) + d4;
+					Vec v0 = getMVp(bx-1 + hx, by-1 + hy) + bcenter; // centers of blocks
+					Vec v1 = getMVp(bx   + hx, by-1 + hy) + bcenter;
+					Vec v2 = getMVp(bx-1 + hx, by   + hy) + bcenter;
+					Vec v3 = getMVp(bx   + hx, by   + hy) + bcenter;
 
+					float kx0 = hx==0 ? 0.5 : 0.0;
+					float ky0 = hy==0 ? 0.5 : 0.0;
 					for(int y=0;y<4;y++) {
+						float ky = y / 8.0 + ky0;
 						for(int x=0;x<4;x++) {
+							float kx = x / 8.0 + kx0;
+							float k0 = ((1-kx)*(1-ky));
+							float k1 = (kx*(1-ky));
+							float k2 = ((1-kx)*ky);
+							float k3 = kx*ky;
+							float kk = k0+k1+k2+k3;
+							assert(kk==1.0);
 
+							FVec point = v0*k0 + v1*k1 +
+								         v2*k2 + v3*k3;
+							Vec ipoint(point.x + 0.5, point.y + 0.5);
+							vecs[hy*4+y][hx*4+x] = ipoint;
+
+							BYTE* p = prevFrame.Y.pixelPtr(ipoint.y, ipoint.x);
+							ddata[(by*8+hy*4+y) * dpitch + bx*8 +hx*4 + x] = *p;
 						}
 					}
 				}
 			}
 
-			for(int y=0;y<8;y++) {
+			/*for(int y=0;y<8;y++) {
 				BYTE *p = prevFrame.Y.pixelPtr(v.y + y, v.x);
 				for(int x=0;x<8;x++) {
 					ddata[(by*8+y) * dpitch + bx*8 + x] = p[x];
 				}
-			}
+			}*/
 
+			Vec v = vecs[0][0];
 			Vec uv(v.x/2, v.y/2);
+			if (bx==20 && by==20)
+				ddd = 4;
+				
 			for(int y=0;y<4;y++) {
 				BYTE *p = prevFrame.U.pixelPtr(uv.y + y, uv.x);
 				for(int x=0;x<4;x++) {
