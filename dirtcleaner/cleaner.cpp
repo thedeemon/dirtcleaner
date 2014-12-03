@@ -200,15 +200,15 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst)
 			//curFrame.Y.readBlock_f(v0, srcBlock);
 			//Vec mv = getMVp(bx, by);
 			//Vec v = bpos + mv;
-			Vec bcenter = bpos + d4;
+			//Vec bcenter = bpos + d4;
 
 			Vec vecs[8][8];
 			for(int hy=0;hy<2;hy++) {
 				for(int hx=0;hx<2;hx++) {
-					Vec v0 = getMVp(bx-1 + hx, by-1 + hy) + bcenter; // centers of blocks
-					Vec v1 = getMVp(bx   + hx, by-1 + hy) + bcenter;
-					Vec v2 = getMVp(bx-1 + hx, by   + hy) + bcenter;
-					Vec v3 = getMVp(bx   + hx, by   + hy) + bcenter;
+					Vec v0 = getMVpCenter(bx-1 + hx, by-1 + hy); // centers of blocks
+					Vec v1 = getMVpCenter(bx   + hx, by-1 + hy);
+					Vec v2 = getMVpCenter(bx-1 + hx, by   + hy);
+					Vec v3 = getMVpCenter(bx   + hx, by   + hy);
 
 					float kx0 = hx==0 ? 0.5 : 0.0;
 					float ky0 = hy==0 ? 0.5 : 0.0;
@@ -242,25 +242,22 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst)
 				}
 			}*/
 
-			Vec v = vecs[0][0];
-			Vec uv(v.x/2, v.y/2);
-			if (bx==20 && by==20)
-				ddd = 4;
+			//Vec v = vecs[0][0];
+			//Vec uv(v.x/2, v.y/2);
+			//if (bx==20 && by==20)
+				//ddd = 4;
 				
-			for(int y=0;y<4;y++) {
-				BYTE *p = prevFrame.U.pixelPtr(uv.y + y, uv.x);
+			for(int y=0;y<4;y++) {				
 				for(int x=0;x<4;x++) {
-					ddata2[(by*4+y) * dpitch2 + bx*4 + x] = p[x];
+					Vec uv = vecs[y*2][x*2].div2();
+					BYTE *p = prevFrame.U.pixelPtr(uv.y, uv.x);
+					ddata2[(by*4+y) * dpitch2 + bx*4 + x] = *p;
+					BYTE *p3 = prevFrame.V.pixelPtr(uv.y, uv.x);
+					ddata3[(by*4+y) * dpitch3 + bx*4 + x] = *p3;
 				}
-			}
-			for(int y=0;y<4;y++) {
-				BYTE *p = prevFrame.V.pixelPtr(uv.y + y, uv.x);
-				for(int x=0;x<4;x++) {
-					ddata3[(by*4+y) * dpitch3 + bx*4 + x] = p[x];
-				}
-			}
-		}
-	}
+			}//y
+		}//for bx
+	}//for by
 
 	prevFrame.swap(curFrame);
 	fn++;
@@ -413,4 +410,9 @@ Vec Cleaner::getMVp(int bx, int by)
 	vectorsP[by][bx] = mv;
 	haveMVp[by][bx] = true;
 	return mv;
+}
+
+Vec Cleaner::getMVpCenter(int bx, int by)
+{
+	return getMVp(bx, by) + Vec(bx*8 + 4, by*8 + 4);
 }

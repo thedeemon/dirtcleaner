@@ -47,6 +47,7 @@ public:
 	//void print(const char* name)	const	{	printf("%s(%d, %d) ", name, x, y);   }
 	bool operator==(const TVec &a) const { return x==a.x && y==a.y;  }
 	TVec<float> operator*(float k) const { return TVec<float>(x*k, y*k); }
+	TVec div2() const { return TVec(x / 2, y / 2); }
 };
 
 typedef TVec<int> Vec;
@@ -119,6 +120,7 @@ public:
 protected:
 	//Vec motionSearch(int bx, int by, MonoBlock<8, float> &srcBlock, Plane &plane); // => offset vector
 	Vec getMVp(int bx, int by);
+	Vec getMVpCenter(int bx, int by);
 
 	YV12Plane prevFrame, curFrame, nextFrame;
 	int fn; //frame number
