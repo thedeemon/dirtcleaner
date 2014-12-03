@@ -1,0 +1,1 @@
+Motion-compensated film dirt cleaner. A plugin for VirtualDub.
