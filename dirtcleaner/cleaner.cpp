@@ -118,6 +118,16 @@ void YV12Plane::copyFrom(const VDXPixmap &src)
 	V.copyFrom((BYTE*)src.data3, src.w/2, src.h/2, src.pitch3);
 }
 
+template<class T>
+void makeMatrix(std::vector< std::vector<T> > &mat, int nbx, int nby)
+{
+	mat.resize(nby);
+	for(int y=0;y<nby;y++) {
+		mat[y].clear();
+		mat[y].resize(nbx);
+	}
+}
+
 void Cleaner::init(int w, int h) 
 {
 	prevFrame.create(w,h); curFrame.create(w,h); nextFrame.create(w,h);
@@ -125,13 +135,14 @@ void Cleaner::init(int w, int h)
 	nbx = (w + 7) / 8;
 	nby = (h + 7) / 8;
 
-	vectors.resize(nby);
-	for(int y=0;y<nby;y++) {
-		vectors[y].clear();
-		vectors[y].resize(nbx);
-	}
+	makeMatrix(vectorsP, nbx, nby);
+	makeMatrix(vectorsN, nbx, nby);
+	makeMatrix(haveMVp, nbx, nby);
+	makeMatrix(haveMVn, nbx, nby);
+
 	inited = 1;
 }
+
 
 void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst)
 {
@@ -165,6 +176,11 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst)
 	}
 
 	curFrame.copyFrom(src);
+	for(int by=0;by<nby;by++)
+		for(int bx=0;bx<nbx;bx++) {
+			haveMVp[by][bx] = false;
+			haveMVn[by][bx] = false;
+		}
 
 	auto ddata = (BYTE*)dst.data;
 	const int dpitch = dst.pitch;
@@ -173,13 +189,32 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst)
 	auto ddata3 = (BYTE*)dst.data3;
 	const int dpitch3 = dst.pitch3;
 
+	const Vec d4(4,4);
+	//float ws[4] = {0.5,}
+
 	for(int by=0;by<nby-1;by++) { // todo: proper border handling in last row and last column
 		for(int bx=0;bx<nbx;bx++) {
-			MonoBlock<8, float> srcBlock;
+			//MonoBlock<8, float> srcBlock;
 			const Vec v0(bx*8, by*8);
-			curFrame.Y.readBlock_f(v0, srcBlock);
-			Vec mv = motionSearch(bx, by, srcBlock, prevFrame.Y);
+			//curFrame.Y.readBlock_f(v0, srcBlock);
+			Vec mv = getMVp(bx, by);
 			Vec v = v0 + mv;
+
+			Vec vecs[8][8];
+			for(int hy=0;hy<2;hy++) {
+				for(int hx=0;hx<2;hx++) {
+					Vec v0 = getMVp(bx-1 + hx, by-1 + hy) + d4; // centers of blocks
+					Vec v1 = getMVp(bx   + hx, by-1 + hy) + d4;
+					Vec v2 = getMVp(bx-1 + hx, by   + hy) + d4;
+					Vec v3 = getMVp(bx   + hx, by   + hy) + d4;
+
+					for(int y=0;y<4;y++) {
+						for(int x=0;x<4;x++) {
+
+						}
+					}
+				}
+			}
 
 			for(int y=0;y<8;y++) {
 				BYTE *p = prevFrame.Y.pixelPtr(v.y + y, v.x);
@@ -300,6 +335,7 @@ void testCandidates(Plane &plane, MonoBlock<8,float> &srcLuma, Vec pos, int bx, 
 	Vec vs[6], cands[6];
 	int nc = 1;
 	cands[0] = Vec(0,0);
+	cands[nc++] = vectors[by][bx]; // old one
 	if (by > 0) {
 		cands[nc++] = vectors[by-1][bx];
 		//cands[nc++] = vectors[by-1][bx+1];
@@ -325,7 +361,7 @@ void testCandidates(Plane &plane, MonoBlock<8,float> &srcLuma, Vec pos, int bx, 
 }
 
 
-Vec Cleaner::motionSearch(int bx, int by, MonoBlock<8, float> &srcBlock, Plane &plane) // => offset vector
+Vec motionSearch(int bx, int by, MonoBlock<8, float> &srcBlock, Plane &plane, VecMatrix &vectors) // => offset vector
 {
 	float bestd = 10000000;	
 	const Vec v0(bx*8, by*8);
@@ -335,6 +371,23 @@ Vec Cleaner::motionSearch(int bx, int by, MonoBlock<8, float> &srcBlock, Plane &
 	//comp_1HsQ(srcLuma, v0, v1, hbx, hby, vectors, diffs); // 1 = comp_1HQsQ seems best for smooth among 32; 8 = comp_1HsQ
 	//comp(srcLuma, fsrcLuma, v0, v1, hbx, hby, vectors, diffs);*/
 	Vec dv = v1 - v0;
-	vectors[by][bx] = dv;
 	return dv;
+}
+
+Vec Cleaner::getMVp(int bx, int by)
+{
+	if (bx < 0) bx = 0;
+	if (bx >= nbx) bx = nbx - 1;
+	if (by < 0) by = 0;
+	if (by >= nby) by = nby - 1;
+
+	if (haveMVp[by][bx]) return vectorsP[by][bx];
+	
+	MonoBlock<8, float> srcBlock;
+	const Vec v0(bx*8, by*8);
+	curFrame.Y.readBlock_f(v0, srcBlock);
+	Vec mv = motionSearch(bx, by, srcBlock, prevFrame.Y, vectorsP);
+	vectorsP[by][bx] = mv;
+	haveMVp[by][bx] = true;
+	return mv;
 }

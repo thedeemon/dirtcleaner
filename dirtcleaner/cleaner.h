@@ -113,12 +113,14 @@ public:
 	int inited;
 
 protected:
-	Vec motionSearch(int bx, int by, MonoBlock<8, float> &srcBlock, Plane &plane); // => offset vector
+	//Vec motionSearch(int bx, int by, MonoBlock<8, float> &srcBlock, Plane &plane); // => offset vector
+	Vec getMVp(int bx, int by);
 
 	YV12Plane prevFrame, curFrame, nextFrame;
 	int fn; //frame number
 	int nbx, nby;
-	VecMatrix vectors;
+	VecMatrix vectorsP, vectorsN;
+	std::vector< std::vector<bool> > haveMVp, haveMVn; //prev, next
 };
 
 ////////////////////////////////////////////////////////////////////////////
