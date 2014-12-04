@@ -113,7 +113,7 @@ public:
 	Cleaner() : fn(0), nbx(0), nby(0), inited(0) {}
 
 	void init(int w, int h);
-	void process(const VDXPixmap &src, const VDXPixmap &dst);
+	void process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame);
 
 	int inited;
 
@@ -121,6 +121,10 @@ protected:
 	//Vec motionSearch(int bx, int by, MonoBlock<8, float> &srcBlock, Plane &plane); // => offset vector
 	Vec getMVp(int bx, int by);
 	Vec getMVpCenter(int bx, int by);
+	Vec getMVn(int bx, int by);
+	Vec getMVnCenter(int bx, int by);
+	Vec getMVCenter(int bx, int by, bool prev);
+	void flowBlock(int bx, int by, bool prev, BYTE* yv12block); // yv12block [8*8 + 4*4 + 4*4]
 
 	YV12Plane prevFrame, curFrame, nextFrame;
 	int fn; //frame number

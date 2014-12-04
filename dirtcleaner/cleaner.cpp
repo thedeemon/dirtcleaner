@@ -143,39 +143,89 @@ void Cleaner::init(int w, int h)
 	inited = 1;
 }
 
-
-void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst)
+void copyFrame(const VDXPixmap &src, const VDXPixmap &dst)
 {
-	if (fn==0) {
-		prevFrame.copyFrom(src);
+	{
+		auto ddata = (BYTE*)dst.data;
+		auto sdata = (BYTE*)src.data;
+		for(int y=0;y<dst.h;y++) {
+			//for(int x=0;x<dst.w;x++)
+			//	ddata[y * dst.pitch + x] = x ^ y;
+			memcpy(&ddata[y * dst.pitch], &sdata[y * src.pitch], dst.w);
+		}
+	}
+	{
+		auto ddata2 = (BYTE*)dst.data2;
+		auto sdata2 = (BYTE*)src.data2;
+		for(int y=0;y<dst.h/2;y++) 
+			memcpy(&ddata2[y * dst.pitch2], &sdata2[y * src.pitch2], dst.w/2);
+	}
+	{
+		auto ddata3 = (BYTE*)dst.data3;
+		auto sdata3 = (BYTE*)src.data3;
+		for(int y=0;y<dst.h/2;y++) 
+			memcpy(&ddata3[y * dst.pitch3], &sdata3[y * src.pitch3], dst.w/2);
+	}
+}
 
-		{
-			auto ddata = (BYTE*)dst.data;
-			auto sdata = (BYTE*)src.data;
-			for(int y=0;y<dst.h;y++) {
-				//for(int x=0;x<dst.w;x++)
-				//	ddata[y * dst.pitch + x] = x ^ y;
-				memcpy(&ddata[y * dst.pitch], &sdata[y * src.pitch], dst.w);
-			}
-		}
-		{
-			auto ddata2 = (BYTE*)dst.data2;
-			auto sdata2 = (BYTE*)src.data2;
-			for(int y=0;y<dst.h/2;y++) 
-				memcpy(&ddata2[y * dst.pitch2], &sdata2[y * src.pitch2], dst.w/2);
-		}
-		{
-			auto ddata3 = (BYTE*)dst.data3;
-			auto sdata3 = (BYTE*)src.data3;
-			for(int y=0;y<dst.h/2;y++) 
-				memcpy(&ddata3[y * dst.pitch3], &sdata3[y * src.pitch3], dst.w/2);
-		}
+void Cleaner::flowBlock(int bx, int by, bool prev, BYTE* yv12block) // yv12block [8*8 + 4*4 + 4*4]
+{
+	Vec vecs[8][8];
+	YV12Plane &frame = prev ? prevFrame : nextFrame;
+	for(int hy=0;hy<2;hy++) {
+		const float ky0 = hy==0 ? 0.5 : 0.0;
+		for(int hx=0;hx<2;hx++) {
+			const Vec v0 = getMVCenter(bx-1 + hx, by-1 + hy, prev); // centers of blocks
+			const Vec v1 = getMVCenter(bx   + hx, by-1 + hy, prev);
+			const Vec v2 = getMVCenter(bx-1 + hx, by   + hy, prev);
+			const Vec v3 = getMVCenter(bx   + hx, by   + hy, prev);
 
+			const float kx0 = hx==0 ? 0.5 : 0.0;			
+			for(int y=0;y<4;y++) {
+				const float ky = y / 8.0 + ky0;
+				for(int x=0;x<4;x++) {
+					const float kx = x / 8.0 + kx0;
+					const float k0 = ((1-kx)*(1-ky));
+					const float k1 = (kx*(1-ky));
+					const float k2 = ((1-kx)*ky);
+					const float k3 = kx*ky;
+					const float kk = k0+k1+k2+k3;
+					assert(kk==1.0);
+
+					FVec point = v0*k0 + v1*k1 +
+									v2*k2 + v3*k3;
+					Vec ipoint(point.x + 0.5, point.y + 0.5);
+					vecs[hy*4+y][hx*4+x] = ipoint;
+
+					BYTE* p = frame.Y.pixelPtr(ipoint.y, ipoint.x);
+					yv12block[(hy*4+y) * 8 + hx*4 + x] = *p;
+				}//x
+			}//y
+		}//hx
+	}//hy
+
+	for(int y=0;y<4;y++) {				
+		for(int x=0;x<4;x++) {
+			Vec uv = vecs[y*2][x*2].div2();
+			BYTE *p = frame.U.pixelPtr(uv.y, uv.x);
+			yv12block[64 + y * 4 + x] = *p;
+			BYTE *p3 = frame.V.pixelPtr(uv.y, uv.x);
+			yv12block[80 + y * 4 + x] = *p3;
+		}
+	}//y
+}
+
+void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
+{
+	if (nFrame < 2) {
+		if (nFrame==0) prevFrame.copyFrom(src);
+		else           curFrame.copyFrom(src);
+		copyFrame(src, dst);
 		fn++;
 		return;
 	}
-
-	curFrame.copyFrom(src);
+	// here nFrame >= 2
+	nextFrame.copyFrom(src);
 	for(int by=0;by<nby;by++)
 		for(int bx=0;bx<nbx;bx++) {
 			haveMVp[by][bx] = false;
@@ -195,71 +245,43 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst)
 
 	for(int by=0;by<nby-1;by++) { // todo: proper border handling in last row and last column
 		for(int bx=0;bx<nbx;bx++) {
-			//MonoBlock<8, float> srcBlock;
-			const Vec bpos(bx*8, by*8);
-			//curFrame.Y.readBlock_f(v0, srcBlock);
-			//Vec mv = getMVp(bx, by);
-			//Vec v = bpos + mv;
-			//Vec bcenter = bpos + d4;
+			BYTE yv12blockP[96];
+			BYTE yv12blockN[96];
+			flowBlock(bx, by, true,  yv12blockP); 
+			flowBlock(bx, by, false, yv12blockN); 
 
-			Vec vecs[8][8];
-			for(int hy=0;hy<2;hy++) {
-				for(int hx=0;hx<2;hx++) {
-					Vec v0 = getMVpCenter(bx-1 + hx, by-1 + hy); // centers of blocks
-					Vec v1 = getMVpCenter(bx   + hx, by-1 + hy);
-					Vec v2 = getMVpCenter(bx-1 + hx, by   + hy);
-					Vec v3 = getMVpCenter(bx   + hx, by   + hy);
+			BYTE yv12block[96];
+			int uc = 128, vc = 128; //black
+			int noisypixels = 0;
 
-					float kx0 = hx==0 ? 0.5 : 0.0;
-					float ky0 = hy==0 ? 0.5 : 0.0;
-					for(int y=0;y<4;y++) {
-						float ky = y / 8.0 + ky0;
-						for(int x=0;x<4;x++) {
-							float kx = x / 8.0 + kx0;
-							float k0 = ((1-kx)*(1-ky));
-							float k1 = (kx*(1-ky));
-							float k2 = ((1-kx)*ky);
-							float k3 = kx*ky;
-							float kk = k0+k1+k2+k3;
-							assert(kk==1.0);
-
-							FVec point = v0*k0 + v1*k1 +
-								         v2*k2 + v3*k3;
-							Vec ipoint(point.x + 0.5, point.y + 0.5);
-							vecs[hy*4+y][hx*4+x] = ipoint;
-
-							BYTE* p = prevFrame.Y.pixelPtr(ipoint.y, ipoint.x);
-							ddata[(by*8+hy*4+y) * dpitch + bx*8 +hx*4 + x] = *p;
-						}
-					}
-				}
+			for(int i=0;i<64;i++) {
+				int diff = abs(yv12blockP[i] - yv12blockN[i]);
+				yv12block[i] = diff;
+				if (diff > 25) noisypixels++;
 			}
+			if (noisypixels >= 4) uc = 0; // change block color
+			if (noisypixels >= 12) vc = 0;
 
-			/*for(int y=0;y<8;y++) {
-				BYTE *p = prevFrame.Y.pixelPtr(v.y + y, v.x);
-				for(int x=0;x<8;x++) {
-					ddata[(by*8+y) * dpitch + bx*8 + x] = p[x];
-				}
-			}*/
+			for(int i=64;i<80;i++)
+				yv12block[i] = uc;
+			for(int i=80;i<96;i++)
+				yv12block[i] = vc;
 
-			//Vec v = vecs[0][0];
-			//Vec uv(v.x/2, v.y/2);
-			//if (bx==20 && by==20)
-				//ddd = 4;
-				
-			for(int y=0;y<4;y++) {				
+			for(int y=0;y<8;y++)
+				for(int x=0;x<8;x++)
+					ddata[(by*8+y)*dpitch + bx*8 + x] = yv12block[y*8+x];
+			for(int y=0;y<4;y++)
 				for(int x=0;x<4;x++) {
-					Vec uv = vecs[y*2][x*2].div2();
-					BYTE *p = prevFrame.U.pixelPtr(uv.y, uv.x);
-					ddata2[(by*4+y) * dpitch2 + bx*4 + x] = *p;
-					BYTE *p3 = prevFrame.V.pixelPtr(uv.y, uv.x);
-					ddata3[(by*4+y) * dpitch3 + bx*4 + x] = *p3;
+					ddata2[(by*4+y)*dpitch2 + bx*4 + x] = yv12block[64 + y*4+x];
+					ddata3[(by*4+y)*dpitch3 + bx*4 + x] = yv12block[80 + y*4+x];
 				}
-			}//y
+
 		}//for bx
 	}//for by
 
-	prevFrame.swap(curFrame);
+	curFrame.swap(prevFrame);
+	nextFrame.swap(curFrame);
+
 	fn++;
 }
 
@@ -415,4 +437,33 @@ Vec Cleaner::getMVp(int bx, int by)
 Vec Cleaner::getMVpCenter(int bx, int by)
 {
 	return getMVp(bx, by) + Vec(bx*8 + 4, by*8 + 4);
+}
+
+Vec Cleaner::getMVn(int bx, int by)
+{
+	if (bx < 0) bx = 0;
+	if (bx >= nbx) bx = nbx - 1;
+	if (by < 0) by = 0;
+	if (by >= nby) by = nby - 1;
+
+	if (haveMVn[by][bx]) return vectorsN[by][bx];
+	
+	MonoBlock<8, float> srcBlock;
+	const Vec v0(bx*8, by*8);
+	curFrame.Y.readBlock_f(v0, srcBlock);
+	Vec mv = motionSearch(bx, by, srcBlock, nextFrame.Y, vectorsN);
+	vectorsN[by][bx] = mv;
+	haveMVn[by][bx] = true;
+	return mv;
+}
+
+Vec Cleaner::getMVnCenter(int bx, int by)
+{
+	return getMVn(bx, by) + Vec(bx*8 + 4, by*8 + 4);
+}
+
+Vec Cleaner::getMVCenter(int bx, int by, bool prev)
+{
+	Vec v = prev ? getMVp(bx, by) : getMVn(bx, by);
+	return v + Vec(bx*8 + 4, by*8 + 4);
 }

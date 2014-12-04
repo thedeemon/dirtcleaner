@@ -32,7 +32,7 @@ long paramProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff) {
     // set old depth value to zero to indicate new pixmap layout should be used
     fa->dst.depth = 0;
 
-	return FILTERPARAM_SWAP_BUFFERS | FILTERPARAM_SUPPORTS_ALTFORMATS; //| FILTERPARAM_HAS_LAG(1);
+	return FILTERPARAM_SWAP_BUFFERS | FILTERPARAM_SUPPORTS_ALTFORMATS | FILTERPARAM_HAS_LAG(1);
 }
 
 int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff) {
@@ -43,7 +43,13 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff) {
 	Cleaner *c = pData->cln();
 	if (c->inited==0) 
 		c->init(src->w, src->h);
-	c->process(*src, *dst);	
+	VDXFilterStateInfo *psi = fa->pfsi;
+	int fn = 0;
+	if (psi) {
+		SHOW(psi->lCurrentFrame);
+		fn = psi->lCurrentFrame;
+	} else log("pfsi is null");
+	c->process(*src, *dst, fn);	
 	return 0;
 }
 
