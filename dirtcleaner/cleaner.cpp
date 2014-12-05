@@ -139,6 +139,7 @@ void Cleaner::init(int w, int h)
 	makeMatrix(vectorsN, nbx, nby);
 	makeMatrix(haveMVp, nbx, nby);
 	makeMatrix(haveMVn, nbx, nby);
+	makeMatrix(motion, nbx, nby);
 
 	inited = 1;
 }
@@ -230,6 +231,7 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 		for(int bx=0;bx<nbx;bx++) {
 			haveMVp[by][bx] = false;
 			haveMVn[by][bx] = false;
+			motion[by][bx] = false;
 		}
 
 	auto ddata = (BYTE*)dst.data;
@@ -250,31 +252,81 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 			flowBlock(bx, by, true,  yv12blockP); 
 			flowBlock(bx, by, false, yv12blockN); 
 
-			BYTE yv12block[96];
+			//BYTE yv12block[96];
 			int uc = 128, vc = 128; //black
 			int noisypixels = 0;
 
 			for(int i=0;i<64;i++) {
 				int diff = abs(yv12blockP[i] - yv12blockN[i]);
-				yv12block[i] = diff;
+				//yv12block[i] = diff;
 				if (diff > 25) noisypixels++;
 			}
-			if (noisypixels >= 4) uc = 0; // change block color
-			if (noisypixels >= 12) vc = 0;
+			bool different = noisypixels >= 4;
+			motion[by][bx] = different; 
+			//if (noisypixels >= 12) vc = 0; // change block color
 
-			for(int i=64;i<80;i++)
+			/*for(int i=64;i<80;i++)
 				yv12block[i] = uc;
 			for(int i=80;i<96;i++)
-				yv12block[i] = vc;
+				yv12block[i] = vc;*/
 
-			for(int y=0;y<8;y++)
-				for(int x=0;x<8;x++)
-					ddata[(by*8+y)*dpitch + bx*8 + x] = yv12block[y*8+x];
-			for(int y=0;y<4;y++)
-				for(int x=0;x<4;x++) {
-					ddata2[(by*4+y)*dpitch2 + bx*4 + x] = yv12block[64 + y*4+x];
-					ddata3[(by*4+y)*dpitch3 + bx*4 + x] = yv12block[80 + y*4+x];
+			/*for(int i=0;i<96;i++) {
+				//yv12block[i] = max( 
+
+			}*/
+
+			if (!different) {
+				for(int y=0;y<8;y++) {
+					BYTE *psrc = curFrame.Y.pixelPtr(by*8 + y, bx*8);
+					for(int x=0;x<8;x++) {
+						const int i = y*8 + x;
+						int c = psrc[x];
+						int upper = max(yv12blockN[i], yv12blockP[i]);
+						int lower = min(yv12blockN[i], yv12blockP[i]);
+						int cl = max(c, lower);
+						ddata[(by*8+y)*dpitch + bx*8 + x] = min(cl, upper);
+					}
 				}
+				for(int y=0;y<4;y++) {
+					BYTE *psrcU = curFrame.U.pixelPtr(by*4 + y, bx*4);
+					BYTE *psrcV = curFrame.V.pixelPtr(by*4 + y, bx*4);
+					for(int x=0;x<4;x++) {
+						const int j = y*4 + x;
+						{
+							int i = j + 64;
+							int upper = max(yv12blockN[i], yv12blockP[i]);
+							int lower = min(yv12blockN[i], yv12blockP[i]);
+							int c = psrcU[x];
+							int cl = max(c, lower);
+							ddata2[(by*4+y)*dpitch2 + bx*4 + x] = min(cl, upper);
+						}
+						{
+							int i = j + 80;
+							int upper = max(yv12blockN[i], yv12blockP[i]);
+							int lower = min(yv12blockN[i], yv12blockP[i]);
+							int c = psrcV[x];
+							int cl = max(c, lower);
+							ddata3[(by*4+y)*dpitch3 + bx*4 + x] = min(cl, upper);
+						}
+					}//x
+				}//y
+			} else { //blocks are too different, copy source
+				for(int y=0;y<8;y++) {
+					BYTE *psrc = curFrame.Y.pixelPtr(by*8 + y, bx*8);
+					for(int x=0;x<8;x++) {
+						ddata[(by*8+y)*dpitch + bx*8 + x] = psrc[x];
+					}
+				}
+				for(int y=0;y<4;y++) {
+					BYTE *psrcU = curFrame.U.pixelPtr(by*4 + y, bx*4);
+					BYTE *psrcV = curFrame.V.pixelPtr(by*4 + y, bx*4);
+					for(int x=0;x<4;x++) {
+						ddata2[(by*4+y)*dpitch2 + bx*4 + x] = psrcU[x];
+						ddata3[(by*4+y)*dpitch3 + bx*4 + x] = psrcV[x];
+					}//x
+				}//y
+
+			}//different?
 
 		}//for bx
 	}//for by

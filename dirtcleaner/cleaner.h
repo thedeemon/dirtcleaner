@@ -131,6 +131,7 @@ protected:
 	int nbx, nby;
 	VecMatrix vectorsP, vectorsN;
 	std::vector< std::vector<bool> > haveMVp, haveMVn; //prev, next
+	std::vector< std::vector<bool> > motion;
 };
 
 ////////////////////////////////////////////////////////////////////////////
