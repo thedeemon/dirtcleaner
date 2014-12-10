@@ -235,6 +235,9 @@ int horEdge(BYTE *p, int pitch) //compares with upper line
 	return sum;
 }
 
+#define PTHRESHOLD 6
+#define NOISE_AMPL 25
+#define NOISY 4
 
 void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 {
@@ -245,6 +248,9 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 		fn++;
 		return;
 	}
+
+	std::vector< std::vector<int> > changed;
+	makeMatrix(changed, nbx, nby);
 	// here nFrame >= 2
 	nextFrame.copyFrom(src);
 	for(int by=0;by<nby;by++)
@@ -252,6 +258,7 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 			haveMVp[by][bx] = false;
 			haveMVn[by][bx] = false;
 			motion[by][bx] = 0;
+			changed[by][bx] = 0;
 		}
 
 	auto ddata = (BYTE*)dst.data;
@@ -267,33 +274,20 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 
 	for(int by=0;by<nby-1;by++) { // todo: proper border handling in last row and last column
 		for(int bx=0;bx<nbx;bx++) {
-			BYTE yv12blockP[96];
-			BYTE yv12blockN[96];
+			__declspec(align(16)) BYTE yv12blockP[96];
+			__declspec(align(16)) BYTE yv12blockN[96];
 			flowBlock(bx, by, true,  yv12blockP); 
 			flowBlock(bx, by, false, yv12blockN); 
 
-			//BYTE yv12block[96];
 			int uc = 128, vc = 128; //black
 			int noisypixels = 0;
 
 			for(int i=0;i<64;i++) {
 				int diff = abs(yv12blockP[i] - yv12blockN[i]);
-				//yv12block[i] = diff;
-				if (diff > 25) noisypixels++;
+				if (diff > NOISE_AMPL) noisypixels++;
 			}
-			bool different = noisypixels >= 4;
+			bool different = noisypixels >= NOISY;
 			motion[by][bx] = different ? 1 : 0; 
-			//if (noisypixels >= 12) vc = 0; // change block color
-
-			/*for(int i=64;i<80;i++)
-				yv12block[i] = uc;
-			for(int i=80;i<96;i++)
-				yv12block[i] = vc;*/
-
-			/*for(int i=0;i<96;i++) {
-				//yv12block[i] = max( 
-
-			}*/
 
 			if (!different) {//motion=0
 				for(int y=0;y<8;y++) {
@@ -337,7 +331,83 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 						ddata[(by*8+y)*dpitch + bx*8 + x] = psrc[x];
 					}
 				}
-				/*for(int y=0;y<4;y++) {
+			}//different?
+
+		}//for bx
+
+		//simple edge check, no far propagation
+		for(int bx=0; bx<nbx;bx++) {
+			bool copyOrg = false;
+			if (motion[by][bx]==0) {
+				//left
+				if (bx > 0 && motion[by][bx-1] == 1) {
+					int orgDiff = vertEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
+					int fltDiff = vertEdge(&ddata[by*8*dpitch + bx*8], dpitch);
+					if (fltDiff > orgDiff + PTHRESHOLD) {
+						copyOrg = true;						
+						goto copyTheBlock;
+					}
+				}
+				//right
+				if (bx < nbx-1 && motion[by][bx+1] == 1) {
+					int orgDiff = vertEdge(curFrame.Y.pixelPtr(by*8, (bx+1)*8), curFrame.Y.stride);
+					int fltDiff = vertEdge(&ddata[by*8*dpitch + (bx+1)*8], dpitch);
+					if (fltDiff > orgDiff + PTHRESHOLD) {
+						copyOrg = true;						
+						goto copyTheBlock;
+					}
+				}
+				//up
+				if (by > 0 && motion[by-1][bx] == 1) {
+					int orgDiff = horEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
+					int fltDiff = horEdge(&ddata[by*8*dpitch + bx*8], dpitch);
+					if (fltDiff > orgDiff + PTHRESHOLD) {
+						copyOrg = true;												
+					}
+				}
+
+				if (copyOrg) {
+					copyTheBlock:
+					motion[by][bx] = 1;
+					changed[by][bx] = 1;
+					for(int y=0;y<8;y++) {
+						BYTE *psrc = curFrame.Y.pixelPtr(by*8 + y, bx*8);
+						for(int x=0;x<8;x++) {
+							ddata[(by*8+y)*dpitch + bx*8 + x] = psrc[x];
+						}
+					}
+				}
+			} else { //this_block.motion=1
+				//up
+				if (by > 0 && motion[by-1][bx]==0) {
+					int orgDiff = horEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
+					int fltDiff = horEdge(&ddata[by*8*dpitch + bx*8], dpitch);
+					if (fltDiff > orgDiff + PTHRESHOLD) {
+						motion[by-1][bx] = 1;
+						changed[by-1][bx] = 1;
+						for(int y=0;y<8;y++) {
+							BYTE *psrc = curFrame.Y.pixelPtr((by-1)*8 + y, bx*8);
+							for(int x=0;x<8;x++) {
+								ddata[((by-1)*8+y)*dpitch + bx*8 + x] = psrc[x];
+							}
+						}
+						for(int y=0;y<4;y++) {
+							BYTE *psrcU = curFrame.U.pixelPtr((by-1)*4 + y, bx*4);
+							BYTE *psrcV = curFrame.V.pixelPtr((by-1)*4 + y, bx*4);
+							for(int x=0;x<4;x++) {
+								ddata2[((by-1)*4+y)*dpitch2 + bx*4 + x] = psrcU[x];
+								ddata3[((by-1)*4+y)*dpitch3 + bx*4 + x] = psrcV[x];
+							}//x
+						}//y
+					} // if < PTHRE
+				}
+			}
+		}//for bx
+
+		//copy UV for row blocks where motion==1
+		for(int bx=0;bx<nbx;bx++) 
+			if (motion[by][bx]==1) {
+				for(int y=0;y<4;y++) {
 					BYTE *psrcU = curFrame.U.pixelPtr(by*4 + y, bx*4);
 					BYTE *psrcV = curFrame.V.pixelPtr(by*4 + y, bx*4);
 					for(int x=0;x<4;x++) {
@@ -345,28 +415,23 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 						ddata3[(by*4+y)*dpitch3 + bx*4 + x] = psrcV[x];
 					}//x
 				}//y
-				*/
-			}//different?
-
-		}//for bx
-
-		//simple edge check, no far propagation
-		for(int bx=0; bx<nbx;bx++) {
-
-			if (motion[by][bx]==0) {
-				//left
-				if (bx > 0 && (motion[by][bx] + motion[by][bx-1] == 1) ) {
-					int orgDiff = vertEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
-
-				}
-				//right
-				//up
-			} else { //this_block.motion=1
-				//up
-
 			}
-		}//for bx
+
 	}//for by
+
+	int totalChanged = 0;
+	for(int by=0;by<nby;by++)
+		for(int bx=0;bx<nbx;bx++) {
+			if (motion[by][bx]==1) { 
+				totalChanged++;
+				BYTE *p = &ddata2[(by*4)*dpitch2 + bx*4];
+				p[0] = 255; 
+				if (changed[by][bx]==1)
+					p[1] = 255;
+			}
+		}
+	SHOW(totalChanged);
+	SHOW(nbx*nby);
 
 	curFrame.swap(prevFrame);
 	nextFrame.swap(curFrame);
