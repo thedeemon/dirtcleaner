@@ -125,6 +125,7 @@ protected:
 	Vec getMVnCenter(int bx, int by);
 	Vec getMVCenter(int bx, int by, bool prev);
 	void flowBlock(int bx, int by, bool prev, BYTE* yv12block); // yv12block [8*8 + 4*4 + 4*4]
+	//void degrainFrame(const VDXPixmap &src, const VDXPixmap &dst);
 
 	YV12Plane prevFrame, curFrame, nextFrame;
 	int fn; //frame number

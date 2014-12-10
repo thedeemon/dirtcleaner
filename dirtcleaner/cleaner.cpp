@@ -169,6 +169,43 @@ void copyFrame(const VDXPixmap &src, const VDXPixmap &dst)
 	}
 }
 
+void degrainPlane(BYTE *src, int spitch, BYTE *dst, int dpitch, int X, int Y)
+{
+	//todo: copy first rows
+	for(int y=2; y<Y-2; y++) {
+		for(int x=2;x < X-2;x++) {
+			int a[8];
+			int si = y * spitch + x;
+			a[0] = src[si-spitch-1];
+			a[1] = src[si-spitch];
+			a[2] = src[si-spitch+1];
+
+			a[3] = src[si-1];
+			a[4] = src[si+1];
+
+			a[5] = src[si+spitch-1];
+			a[6] = src[si+spitch];
+			a[7] = src[si+spitch+1];
+
+			/*[[0,4],[1,5],[2,6],[3,7]]
+[[0,2],[1,3],[4,6],[5,7]]
+[[2,4],[3,5],[0,1],[6,7]]
+[[2,3],[4,5]]
+[[1,4],[3,6]]
+[[1,2],[3,4],[5,6]]
+*/
+		}
+	}
+	//todo: copy last rows
+
+}
+
+void degrainFrame(const VDXPixmap &src, const VDXPixmap &dst)
+{
+	const int X = dst.w, Y = dst.h;
+
+}
+
 void Cleaner::flowBlock(int bx, int by, bool prev, BYTE* yv12block) // yv12block [8*8 + 4*4 + 4*4]
 {
 	Vec vecs[8][8];
@@ -190,8 +227,8 @@ void Cleaner::flowBlock(int bx, int by, bool prev, BYTE* yv12block) // yv12block
 					const float k1 = (kx*(1-ky));
 					const float k2 = ((1-kx)*ky);
 					const float k3 = kx*ky;
-					const float kk = k0+k1+k2+k3;
-					assert(kk==1.0);
+					//const float kk = k0+k1+k2+k3;
+					//assert(kk==1.0);
 
 					FVec point = v0*k0 + v1*k1 +
 									v2*k2 + v3*k3;
@@ -438,6 +475,7 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 
 	fn++;
 }
+
 
 template <int W>
 float fdiff(MonoBlock<W,float> &block, MonoBlock<W,float> &sblock)
