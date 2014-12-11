@@ -169,11 +169,14 @@ void copyFrame(const VDXPixmap &src, const VDXPixmap &dst)
 	}
 }
 
+#define CMP(x,y) if (x > y) { int t = x; x = y;  y = t; }
+
 void degrainPlane(BYTE *src, int spitch, BYTE *dst, int dpitch, int X, int Y)
 {
-	//todo: copy first rows
-	for(int y=2; y<Y-2; y++) {
-		for(int x=2;x < X-2;x++) {
+	memcpy(dst, src, X);
+	for(int y=1; y<Y-1; y++) {
+		dst[y*dpitch] = src[y*spitch];
+		for(int x=1;x < X-1;x++) {
 			int a[8];
 			int si = y * spitch + x;
 			a[0] = src[si-spitch-1];
@@ -181,29 +184,31 @@ void degrainPlane(BYTE *src, int spitch, BYTE *dst, int dpitch, int X, int Y)
 			a[2] = src[si-spitch+1];
 
 			a[3] = src[si-1];
+			int c = src[si];
 			a[4] = src[si+1];
 
 			a[5] = src[si+spitch-1];
 			a[6] = src[si+spitch];
 			a[7] = src[si+spitch+1];
 
-			/*[[0,4],[1,5],[2,6],[3,7]]
-[[0,2],[1,3],[4,6],[5,7]]
-[[2,4],[3,5],[0,1],[6,7]]
-[[2,3],[4,5]]
-[[1,4],[3,6]]
-[[1,2],[3,4],[5,6]]
-*/
-		}
-	}
-	//todo: copy last rows
+			CMP(a[0], a[1]); CMP(a[2], a[3]); CMP(a[4], a[5]); CMP(a[6], a[7]); //16 comparisons
+			CMP(a[0], a[2]); CMP(a[1], a[3]); CMP(a[4], a[6]); CMP(a[5], a[7]);
+			CMP(a[1], a[2]); CMP(a[5], a[6]); CMP(a[0], a[4]); CMP(a[3], a[7]);
+			CMP(a[1], a[5]); CMP(a[2], a[6]);
+			CMP(a[1], a[4]); CMP(a[3], a[6]);
 
+			dst[y * dpitch + x] = max(min(c, a[6]), a[1]);
+		}
+		dst[y*dpitch + X-1] = src[y*spitch + X-1];
+	}
+	memcpy(&dst[(Y-1)*dpitch], &src[(Y-1)*spitch], X);
 }
 
 void degrainFrame(const VDXPixmap &src, const VDXPixmap &dst)
 {
-	const int X = dst.w, Y = dst.h;
-
+	degrainPlane((BYTE*)src.data,  src.pitch,  (BYTE*)dst.data,  dst.pitch,  dst.w,   dst.h);
+	degrainPlane((BYTE*)src.data2, src.pitch2, (BYTE*)dst.data2, dst.pitch2, dst.w/2, dst.h/2);
+	degrainPlane((BYTE*)src.data3, src.pitch3, (BYTE*)dst.data3, dst.pitch3, dst.w/2, dst.h/2);
 }
 
 void Cleaner::flowBlock(int bx, int by, bool prev, BYTE* yv12block) // yv12block [8*8 + 4*4 + 4*4]
@@ -278,6 +283,9 @@ int horEdge(BYTE *p, int pitch) //compares with upper line
 
 void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 {
+	degrainFrame(src, dst);
+	return;
+
 	if (nFrame < 2) {
 		if (nFrame==0) prevFrame.copyFrom(src);
 		else           curFrame.copyFrom(src);
