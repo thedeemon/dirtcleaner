@@ -211,6 +211,14 @@ void degrainFrame(const VDXPixmap &src, const VDXPixmap &dst)
 	degrainPlane((BYTE*)src.data3, src.pitch3, (BYTE*)dst.data3, dst.pitch3, dst.w/2, dst.h/2);
 }
 
+void degrainPlane(YV12Plane &src, const VDXPixmap &dst)
+{
+	degrainPlane(src.Y.pixelPtr(0,0),  src.Y.stride, (BYTE*)dst.data,  dst.pitch,  dst.w,   dst.h);
+	degrainPlane(src.U.pixelPtr(0,0),  src.U.stride, (BYTE*)dst.data2, dst.pitch2, dst.w/2, dst.h/2);
+	degrainPlane(src.V.pixelPtr(0,0),  src.V.stride, (BYTE*)dst.data3, dst.pitch3, dst.w/2, dst.h/2);
+}
+
+
 void Cleaner::flowBlock(int bx, int by, bool prev, BYTE* yv12block) // yv12block [8*8 + 4*4 + 4*4]
 {
 	Vec vecs[8][8];
@@ -280,12 +288,10 @@ int horEdge(BYTE *p, int pitch) //compares with upper line
 #define PTHRESHOLD 6
 #define NOISE_AMPL 25
 #define NOISY 4
+#define GMTHRESHOLD 0.4
 
 void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 {
-	degrainFrame(src, dst);
-	return;
-
 	if (nFrame < 2) {
 		if (nFrame==0) prevFrame.copyFrom(src);
 		else           curFrame.copyFrom(src);
@@ -315,7 +321,6 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 
 	const Vec d4(4,4);
 	int ddd;
-	//float ws[4] = {0.5,}
 
 	for(int by=0;by<nby-1;by++) { // todo: proper border handling in last row and last column
 		for(int bx=0;bx<nbx;bx++) {
@@ -469,14 +474,16 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 		for(int bx=0;bx<nbx;bx++) {
 			if (motion[by][bx]==1) { 
 				totalChanged++;
-				BYTE *p = &ddata2[(by*4)*dpitch2 + bx*4];
+				/*BYTE *p = &ddata2[(by*4)*dpitch2 + bx*4];
 				p[0] = 255; 
 				if (changed[by][bx]==1)
-					p[1] = 255;
+					p[1] = 255;*/
 			}
 		}
-	SHOW(totalChanged);
-	SHOW(nbx*nby);
+	
+	if (totalChanged >= nbx * nby * GMTHRESHOLD) {
+		degrainPlane(curFrame, dst);
+	}
 
 	curFrame.swap(prevFrame);
 	nextFrame.swap(curFrame);
