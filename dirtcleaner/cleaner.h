@@ -81,7 +81,7 @@ struct ProcessParams {
 
 class Cleaner : public ISquadJob {
 public:
-	Cleaner() : nbx(0), nby(0), inited(0), pSquad(NULL) {}
+	Cleaner() : nbx(0), nby(0), inited(0), pSquad(NULL), nThreads(0) {}
 	virtual ~Cleaner();
 
 	void init(int w, int h);
@@ -90,22 +90,23 @@ public:
 
 	virtual void RunCommand(int command, void *params, CSquadWorker *sqworker);
 
-
-	int inited;
-
 protected:
 	Vec getMVp(int bx, int by);
 	Vec getMVn(int bx, int by);
 	Vec getMVCenter(int bx, int by, bool prev);
 	void flowBlock(int bx, int by, bool prev, BYTE* yv12block); // yv12block [8*8 + 4*4 + 4*4]
 
-	YV12Plane prevFrame, curFrame, nextFrame;
 	int nbx, nby;
+	YV12Plane prevFrame, curFrame, nextFrame;
+	std::vector<HANDLE> sem; //semaphores
 	VecMatrix vectorsP, vectorsN;
 	std::vector< std::vector<bool> > haveMVp, haveMVn; //prev, next
 	std::vector< std::vector<int> > motion;
 	CSquad *pSquad;
+	int nThreads;
 	bool degrainInstead;
+public:
+	int inited;
 };
 
 ////////////////////////////////////////////////////////////////////////////

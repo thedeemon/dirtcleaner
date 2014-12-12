@@ -142,7 +142,12 @@ void Cleaner::init(int w, int h)
 
 	SYSTEM_INFO si;
 	GetSystemInfo(&si);
-	pSquad = new CSquad(si.dwNumberOfProcessors);
+	nThreads = si.dwNumberOfProcessors;
+	pSquad = new CSquad(nThreads);
+	
+	sem.resize(nThreads);
+	for(int i=0;i<nThreads;i++)
+		sem[i] = CreateSemaphore(NULL,0,nbx,NULL);
 
 	inited = 1;
 }
@@ -153,6 +158,8 @@ Cleaner::~Cleaner()
 		delete pSquad;
 		pSquad = NULL;
 	}
+	for(int i=0;i<sem.size();i++)
+		CloseHandle(sem[i]);
 }
 
 void copyFrame(const VDXPixmap &src, const VDXPixmap &dst)
@@ -342,23 +349,25 @@ void Cleaner::process(const VDXPixmap *src, const VDXPixmap *dst, int nFrame)
 #define NOISE_AMPL 25
 #define NOISY 4
 #define GMTHRESHOLD 0.4
+//#define SHOW_COPIED_BLOCKS
 
 void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFrame, CSquadWorker *sqworker)
 {
 	const VDXPixmap &src = *pSrc;
 	const VDXPixmap &dst = *pDst;
-	if (sqworker->MyNum() != 0) return;
 	
 	const int X = curFrame.Y.width;
 	const int Y = curFrame.Y.height;
 	const bool haveRightEdge = X > nbx*8;
 	const bool haveLowerEdge = Y > nby*8;
 	// here nFrame >= 2
+	const int lastThread = sqworker->NumThreads() - 1;
+	const int myNum = sqworker->MyNum();
 	
-	if (sqworker->MyNum() == 0)
+	if (myNum == lastThread)
 		nextFrame.copyFrom(src);
 
-	if (sqworker->MyNum() == sqworker->NumThreads()-1) {
+	if (myNum == 0) {
 		for(int by=0;by<nby;by++)
 			for(int bx=0;bx<nbx;bx++) {
 				haveMVp[by][bx] = false;
@@ -378,8 +387,12 @@ void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFra
 	sqworker->GetSegment(nby, by0, bys);
 	const int by1 = by0 + bys;
 
-	for(int by=by0;by<by1;by++) { 
-		for(int bx=0;bx<nbx;bx++) {
+	sqworker->Sync();
+
+	for(int bx=0;bx<nbx;bx++) {
+		if (myNum>0)
+			WaitForSingleObject(sem[myNum-1], INFINITE);
+		for(int by=by0;by<by1;by++) { 		
 			__declspec(align(16)) BYTE yv12blockP[96];
 			__declspec(align(16)) BYTE yv12blockN[96];
 			flowBlock(bx, by, true,  yv12blockP); 
@@ -438,22 +451,33 @@ void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFra
 					}
 				}
 			}//different?
+		}//for by
 
-		}//for bx
-
-		if (haveRightEdge) {
-			for(int y=0;y<8;y++) {
-				int di = (by*8+y)*dpitch;
-				BYTE *psrc = curFrame.Y.pixelPtr(by*8 + y, 0);
-				for(int x=nbx*8; x<X; x++)
-					ddata[di+x] = psrc[x];
-			}
-		}
+		if (myNum < nThreads-1)
+		    ReleaseSemaphore(sem[myNum], 1, NULL);
 
 		//simple edge check, no far propagation
-		for(int bx=0; bx<nbx;bx++) {
+		for(int by=by0;by<by1;by++) {
 			bool copyOrg = false;
 			if (motion[by][bx]==0) {
+				//up
+				if (by > by0 && motion[by-1][bx] == 1) {
+					int orgDiff = horEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
+					int fltDiff = horEdge(&ddata[by*8*dpitch + bx*8], dpitch);
+					if (fltDiff > orgDiff + PTHRESHOLD) {
+						copyOrg = true;												
+						goto copyTheBlock;
+					}
+				}
+				//down
+				if (by < by1-1 && motion[by+1][bx] == 1) {
+					int orgDiff = horEdge(curFrame.Y.pixelPtr((by+1)*8, bx*8), curFrame.Y.stride);
+					int fltDiff = horEdge(&ddata[(by+1)*8*dpitch + bx*8], dpitch);
+					if (fltDiff > orgDiff + PTHRESHOLD) {
+						copyOrg = true;		
+						goto copyTheBlock;
+					}
+				}
 				//left
 				if (bx > 0 && motion[by][bx-1] == 1) {
 					int orgDiff = vertEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
@@ -463,23 +487,15 @@ void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFra
 						goto copyTheBlock;
 					}
 				}
-				//right
-				if (bx < nbx-1 && motion[by][bx+1] == 1) {
+				//right block is not calculated yet
+				/*if (bx < nbx-1 && motion[by][bx+1] == 1) {
 					int orgDiff = vertEdge(curFrame.Y.pixelPtr(by*8, (bx+1)*8), curFrame.Y.stride);
 					int fltDiff = vertEdge(&ddata[by*8*dpitch + (bx+1)*8], dpitch);
 					if (fltDiff > orgDiff + PTHRESHOLD) {
 						copyOrg = true;						
 						goto copyTheBlock;
 					}
-				}
-				//up
-				if (by > by0 && motion[by-1][bx] == 1) {
-					int orgDiff = horEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
-					int fltDiff = horEdge(&ddata[by*8*dpitch + bx*8], dpitch);
-					if (fltDiff > orgDiff + PTHRESHOLD) {
-						copyOrg = true;												
-					}
-				}
+				}*/
 
 				if (copyOrg) {
 					copyTheBlock:
@@ -492,34 +508,36 @@ void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFra
 					}
 				}
 			} else { //this_block.motion=1
-				//up
-				if (by > by0 && motion[by-1][bx]==0) {
-					int orgDiff = horEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
-					int fltDiff = horEdge(&ddata[by*8*dpitch + bx*8], dpitch);
+				//left
+				if (bx > 0 && motion[by][bx-1]==0) {
+					int orgDiff = vertEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
+					int fltDiff = vertEdge(&ddata[by*8*dpitch + bx*8], dpitch);
 					if (fltDiff > orgDiff + PTHRESHOLD) {
-						motion[by-1][bx] = 1;
-						//changed[by-1][bx] = 1;
+						motion[by][bx-1] = 1;
 						for(int y=0;y<8;y++) {
-							BYTE *psrc = curFrame.Y.pixelPtr((by-1)*8 + y, bx*8);
+							BYTE *psrc = curFrame.Y.pixelPtr(by*8 + y, (bx-1)*8);
 							for(int x=0;x<8;x++) {
-								ddata[((by-1)*8+y)*dpitch + bx*8 + x] = psrc[x];
+								ddata[(by*8+y)*dpitch + (bx-1)*8 + x] = psrc[x];
 							}
 						}
 						for(int y=0;y<4;y++) {
-							BYTE *psrcU = curFrame.U.pixelPtr((by-1)*4 + y, bx*4);
-							BYTE *psrcV = curFrame.V.pixelPtr((by-1)*4 + y, bx*4);
+							BYTE *psrcU = curFrame.U.pixelPtr(by*4 + y, (bx-1)*4);
+							BYTE *psrcV = curFrame.V.pixelPtr(by*4 + y, (bx-1)*4);
 							for(int x=0;x<4;x++) {
-								ddata2[((by-1)*4+y)*dpitch2 + bx*4 + x] = psrcU[x];
-								ddata3[((by-1)*4+y)*dpitch3 + bx*4 + x] = psrcV[x];
+								ddata2[(by*4+y)*dpitch2 + (bx-1)*4 + x] = psrcU[x];
+								ddata3[(by*4+y)*dpitch3 + (bx-1)*4 + x] = psrcV[x];
 							}//x
 						}//y
+						#ifdef SHOW_COPIED_BLOCKS
+						ddata3[(by*4)*dpitch3 + (bx-1)*4] = 0; //dbg
+						#endif
 					} // if < PTHRE
 				}
-			}
-		}//for bx
+			}//if motion==1
+		}//for by
 
-		//copy UV for row blocks where motion==1
-		for(int bx=0;bx<nbx;bx++) 
+		//copy UV for column blocks where motion==1
+		for(int by=by0;by<by1;by++) 
 			if (motion[by][bx]==1) {
 				for(int y=0;y<4;y++) {
 					BYTE *psrcU = curFrame.U.pixelPtr(by*4 + y, bx*4);
@@ -529,9 +547,20 @@ void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFra
 						ddata3[(by*4+y)*dpitch3 + bx*4 + x] = psrcV[x];
 					}//x
 				}//y
+				#ifdef SHOW_COPIED_BLOCKS
+				ddata3[(by*4)*dpitch3 + bx*4] = 0;//dbg
+				#endif
 			}
+	}//for bx
 
-		if (haveRightEdge) {
+	if (haveRightEdge) {
+		for(int by=by0;by<by1;by++) {
+			for(int y=0;y<8;y++) {
+				const int di = (by*8+y)*dpitch;
+				BYTE *psrc = curFrame.Y.pixelPtr(by*8 + y, 0);
+				for(int x=nbx*8; x<X; x++)
+					ddata[di+x] = psrc[x];
+			}
 			for(int y=0;y<4;y++) {
 				BYTE *psrcU = curFrame.U.pixelPtr(by*4 + y, 0);
 				BYTE *psrcV = curFrame.V.pixelPtr(by*4 + y, 0);
@@ -540,12 +569,12 @@ void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFra
 					ddata3[(by*4+y)*dpitch3 + x] = psrcV[x];
 				}//x
 			}//y
-		}
+		}//by
+	}//if right edge
 
-	}//for by
 
 	sqworker->Sync();
-	if (sqworker->MyNum() != sqworker->NumThreads() - 1) return; // the rest does one thread
+	if (myNum != lastThread) return; // the rest does one last thread
 
 	int totalChanged = 0;
 	for(int by=0;by<nby;by++)
