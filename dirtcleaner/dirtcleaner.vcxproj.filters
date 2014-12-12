@@ -27,6 +27,9 @@
     <ClInclude Include="cleaner.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="squad.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -39,6 +42,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="cleaner.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="squad.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

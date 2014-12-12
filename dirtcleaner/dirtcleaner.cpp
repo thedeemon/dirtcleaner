@@ -49,7 +49,7 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff) {
 		SHOW(psi->lCurrentFrame);
 		fn = psi->lCurrentFrame;
 	} else log("pfsi is null");
-	c->process(*src, *dst, fn);	
+	c->process(src, dst, fn);	
 	return 0;
 }
 

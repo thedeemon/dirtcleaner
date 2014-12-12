@@ -131,7 +131,6 @@ void makeMatrix(std::vector< std::vector<T> > &mat, int nbx, int nby)
 void Cleaner::init(int w, int h) 
 {
 	prevFrame.create(w,h); curFrame.create(w,h); nextFrame.create(w,h);
-	fn = 0;
 	nbx = w / 8;
 	nby = h / 8;
 
@@ -141,7 +140,19 @@ void Cleaner::init(int w, int h)
 	makeMatrix(haveMVn, nbx, nby);
 	makeMatrix(motion, nbx, nby);
 
+	SYSTEM_INFO si;
+	GetSystemInfo(&si);
+	pSquad = new CSquad(si.dwNumberOfProcessors);
+
 	inited = 1;
+}
+
+Cleaner::~Cleaner()
+{
+	if (pSquad) {
+		delete pSquad;
+		pSquad = NULL;
+	}
 }
 
 void copyFrame(const VDXPixmap &src, const VDXPixmap &dst)
@@ -211,13 +222,16 @@ void degrainFrame(const VDXPixmap &src, const VDXPixmap &dst)
 	degrainPlane((BYTE*)src.data3, src.pitch3, (BYTE*)dst.data3, dst.pitch3, dst.w/2, dst.h/2);
 }
 
-void degrainPlane(YV12Plane &src, const VDXPixmap &dst)
+void degrainYV12Plane(YV12Plane &src, const VDXPixmap &dst, CSquadWorker *sqworker)
 {
-	degrainPlane(src.Y.pixelPtr(0,0),  src.Y.stride, (BYTE*)dst.data,  dst.pitch,  dst.w,   dst.h);
-	degrainPlane(src.U.pixelPtr(0,0),  src.U.stride, (BYTE*)dst.data2, dst.pitch2, dst.w/2, dst.h/2);
-	degrainPlane(src.V.pixelPtr(0,0),  src.V.stride, (BYTE*)dst.data3, dst.pitch3, dst.w/2, dst.h/2);
+	const int mynum = sqworker->MyNum();
+	if (mynum == 0)
+		degrainPlane(src.Y.pixelPtr(0,0),  src.Y.stride, (BYTE*)dst.data,  dst.pitch,  dst.w,   dst.h);
+	if (mynum == sqworker->NumThreads() - 1) {
+		degrainPlane(src.U.pixelPtr(0,0),  src.U.stride, (BYTE*)dst.data2, dst.pitch2, dst.w/2, dst.h/2);
+		degrainPlane(src.V.pixelPtr(0,0),  src.V.stride, (BYTE*)dst.data3, dst.pitch3, dst.w/2, dst.h/2);
+	}
 }
-
 
 void Cleaner::flowBlock(int bx, int by, bool prev, BYTE* yv12block) // yv12block [8*8 + 4*4 + 4*4]
 {
@@ -285,35 +299,73 @@ int horEdge(BYTE *p, int pitch) //compares with upper line
 	return sum;
 }
 
+void Cleaner::RunCommand(int command, void *params, CSquadWorker *sqworker)
+{
+	ProcessParams *ps = (ProcessParams*) params;
+	if (command==1)
+		processPart(ps->src, ps->dst, ps->nFrame, sqworker);
+	else 
+		degrainYV12Plane(curFrame, *ps->dst, sqworker);	
+}
+
+void Cleaner::process(const VDXPixmap *src, const VDXPixmap *dst, int nFrame)
+{
+	ProcessParams params;
+	params.src = src;
+	params.dst = dst;
+	params.nFrame = nFrame;
+	degrainInstead = false;
+
+	if (nFrame < 2) {		
+		if (nFrame==0) {
+			prevFrame.copyFrom(*src);
+			copyFrame(*src, *dst);
+			return;
+		} else {
+			curFrame.copyFrom(*src);
+			degrainInstead = true;
+		}		
+	} else
+		pSquad->RunParallel(1, &params, this);
+
+	if (degrainInstead) 
+		pSquad->RunParallel(2, &params, this);
+
+	if (nFrame >= 2) {
+		curFrame.swap(prevFrame);
+		nextFrame.swap(curFrame);
+	}	
+}
+
+
 #define PTHRESHOLD 6
 #define NOISE_AMPL 25
 #define NOISY 4
 #define GMTHRESHOLD 0.4
 
-void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
+void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFrame, CSquadWorker *sqworker)
 {
-	if (nFrame < 2) {
-		if (nFrame==0) prevFrame.copyFrom(src);
-		else           curFrame.copyFrom(src);
-		degrainFrame(src, dst);
-		fn++;
-		return;
-	}
+	const VDXPixmap &src = *pSrc;
+	const VDXPixmap &dst = *pDst;
+	if (sqworker->MyNum() != 0) return;
+	
 	const int X = curFrame.Y.width;
 	const int Y = curFrame.Y.height;
 	const bool haveRightEdge = X > nbx*8;
 	const bool haveLowerEdge = Y > nby*8;
-	std::vector< std::vector<int> > changed;
-	makeMatrix(changed, nbx, nby);
 	// here nFrame >= 2
-	nextFrame.copyFrom(src);
-	for(int by=0;by<nby;by++)
-		for(int bx=0;bx<nbx;bx++) {
-			haveMVp[by][bx] = false;
-			haveMVn[by][bx] = false;
-			motion[by][bx] = 0;
-			changed[by][bx] = 0;
-		}
+	
+	if (sqworker->MyNum() == 0)
+		nextFrame.copyFrom(src);
+
+	if (sqworker->MyNum() == sqworker->NumThreads()-1) {
+		for(int by=0;by<nby;by++)
+			for(int bx=0;bx<nbx;bx++) {
+				haveMVp[by][bx] = false;
+				haveMVn[by][bx] = false;
+				motion[by][bx] = 0;
+			}
+	}
 
 	auto ddata = (BYTE*)dst.data;
 	const int dpitch = dst.pitch;
@@ -321,16 +373,19 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 	const int dpitch2 = dst.pitch2;
 	auto ddata3 = (BYTE*)dst.data3;
 	const int dpitch3 = dst.pitch3;
-	int ddd;	
 
-	for(int by=0;by<nby;by++) { 
+	int by0 = 0, bys = nby;
+	sqworker->GetSegment(nby, by0, bys);
+	const int by1 = by0 + bys;
+
+	for(int by=by0;by<by1;by++) { 
 		for(int bx=0;bx<nbx;bx++) {
 			__declspec(align(16)) BYTE yv12blockP[96];
 			__declspec(align(16)) BYTE yv12blockN[96];
 			flowBlock(bx, by, true,  yv12blockP); 
 			flowBlock(bx, by, false, yv12blockN); 
 
-			int uc = 128, vc = 128; //black
+			//int uc = 128, vc = 128; //black
 			int noisypixels = 0;
 
 			for(int i=0;i<64;i++) {
@@ -418,7 +473,7 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 					}
 				}
 				//up
-				if (by > 0 && motion[by-1][bx] == 1) {
+				if (by > by0 && motion[by-1][bx] == 1) {
 					int orgDiff = horEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
 					int fltDiff = horEdge(&ddata[by*8*dpitch + bx*8], dpitch);
 					if (fltDiff > orgDiff + PTHRESHOLD) {
@@ -429,7 +484,6 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 				if (copyOrg) {
 					copyTheBlock:
 					motion[by][bx] = 1;
-					changed[by][bx] = 1;
 					for(int y=0;y<8;y++) {
 						BYTE *psrc = curFrame.Y.pixelPtr(by*8 + y, bx*8);
 						for(int x=0;x<8;x++) {
@@ -439,12 +493,12 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 				}
 			} else { //this_block.motion=1
 				//up
-				if (by > 0 && motion[by-1][bx]==0) {
+				if (by > by0 && motion[by-1][bx]==0) {
 					int orgDiff = horEdge(curFrame.Y.pixelPtr(by*8, bx*8), curFrame.Y.stride);
 					int fltDiff = horEdge(&ddata[by*8*dpitch + bx*8], dpitch);
 					if (fltDiff > orgDiff + PTHRESHOLD) {
 						motion[by-1][bx] = 1;
-						changed[by-1][bx] = 1;
+						//changed[by-1][bx] = 1;
 						for(int y=0;y<8;y++) {
 							BYTE *psrc = curFrame.Y.pixelPtr((by-1)*8 + y, bx*8);
 							for(int x=0;x<8;x++) {
@@ -490,20 +544,19 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 
 	}//for by
 
+	sqworker->Sync();
+	if (sqworker->MyNum() != sqworker->NumThreads() - 1) return; // the rest does one thread
+
 	int totalChanged = 0;
 	for(int by=0;by<nby;by++)
 		for(int bx=0;bx<nbx;bx++) {
 			if (motion[by][bx]==1) { 
 				totalChanged++;
-				/*BYTE *p = &ddata2[(by*4)*dpitch2 + bx*4];
-				p[0] = 255; 
-				if (changed[by][bx]==1)
-					p[1] = 255;*/
 			}
 		}
 	
 	if (totalChanged >= nbx * nby * GMTHRESHOLD) {
-		degrainPlane(curFrame, dst);
+		degrainInstead = true;
 	} else {
 		if (haveLowerEdge) {
 			for(int y=nby*8; y<Y; y++)
@@ -514,11 +567,6 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 			}
 		}
 	}
-
-	curFrame.swap(prevFrame);
-	nextFrame.swap(curFrame);
-
-	fn++;
 }
 
 
@@ -671,11 +719,6 @@ Vec Cleaner::getMVp(int bx, int by)
 	return mv;
 }
 
-Vec Cleaner::getMVpCenter(int bx, int by)
-{
-	return getMVp(bx, by) + Vec(bx*8 + 4, by*8 + 4);
-}
-
 Vec Cleaner::getMVn(int bx, int by)
 {
 	if (bx < 0) bx = 0;
@@ -692,11 +735,6 @@ Vec Cleaner::getMVn(int bx, int by)
 	vectorsN[by][bx] = mv;
 	haveMVn[by][bx] = true;
 	return mv;
-}
-
-Vec Cleaner::getMVnCenter(int bx, int by)
-{
-	return getMVn(bx, by) + Vec(bx*8 + 4, by*8 + 4);
 }
 
 Vec Cleaner::getMVCenter(int bx, int by, bool prev)
