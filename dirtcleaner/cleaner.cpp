@@ -132,8 +132,8 @@ void Cleaner::init(int w, int h)
 {
 	prevFrame.create(w,h); curFrame.create(w,h); nextFrame.create(w,h);
 	fn = 0;
-	nbx = (w + 7) / 8;
-	nby = (h + 7) / 8;
+	nbx = w / 8;
+	nby = h / 8;
 
 	makeMatrix(vectorsP, nbx, nby);
 	makeMatrix(vectorsN, nbx, nby);
@@ -295,11 +295,14 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 	if (nFrame < 2) {
 		if (nFrame==0) prevFrame.copyFrom(src);
 		else           curFrame.copyFrom(src);
-		copyFrame(src, dst);
+		degrainFrame(src, dst);
 		fn++;
 		return;
 	}
-
+	const int X = curFrame.Y.width;
+	const int Y = curFrame.Y.height;
+	const bool haveRightEdge = X > nbx*8;
+	const bool haveLowerEdge = Y > nby*8;
 	std::vector< std::vector<int> > changed;
 	makeMatrix(changed, nbx, nby);
 	// here nFrame >= 2
@@ -318,11 +321,9 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 	const int dpitch2 = dst.pitch2;
 	auto ddata3 = (BYTE*)dst.data3;
 	const int dpitch3 = dst.pitch3;
+	int ddd;	
 
-	const Vec d4(4,4);
-	int ddd;
-
-	for(int by=0;by<nby-1;by++) { // todo: proper border handling in last row and last column
+	for(int by=0;by<nby;by++) { 
 		for(int bx=0;bx<nbx;bx++) {
 			__declspec(align(16)) BYTE yv12blockP[96];
 			__declspec(align(16)) BYTE yv12blockN[96];
@@ -384,6 +385,15 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 			}//different?
 
 		}//for bx
+
+		if (haveRightEdge) {
+			for(int y=0;y<8;y++) {
+				int di = (by*8+y)*dpitch;
+				BYTE *psrc = curFrame.Y.pixelPtr(by*8 + y, 0);
+				for(int x=nbx*8; x<X; x++)
+					ddata[di+x] = psrc[x];
+			}
+		}
 
 		//simple edge check, no far propagation
 		for(int bx=0; bx<nbx;bx++) {
@@ -467,6 +477,17 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 				}//y
 			}
 
+		if (haveRightEdge) {
+			for(int y=0;y<4;y++) {
+				BYTE *psrcU = curFrame.U.pixelPtr(by*4 + y, 0);
+				BYTE *psrcV = curFrame.V.pixelPtr(by*4 + y, 0);
+				for(int x=nbx*4;x<X/2;x++) {
+					ddata2[(by*4+y)*dpitch2 + x] = psrcU[x];
+					ddata3[(by*4+y)*dpitch3 + x] = psrcV[x];
+				}//x
+			}//y
+		}
+
 	}//for by
 
 	int totalChanged = 0;
@@ -483,6 +504,15 @@ void Cleaner::process(const VDXPixmap &src, const VDXPixmap &dst, int nFrame)
 	
 	if (totalChanged >= nbx * nby * GMTHRESHOLD) {
 		degrainPlane(curFrame, dst);
+	} else {
+		if (haveLowerEdge) {
+			for(int y=nby*8; y<Y; y++)
+				memcpy(&ddata[y*dpitch], curFrame.Y.pixelPtr(y, 0), X);
+			for(int y=nby*4; y<Y/2; y++) {
+				memcpy(&ddata2[y*dpitch2], curFrame.U.pixelPtr(y, 0), X/2);
+				memcpy(&ddata3[y*dpitch3], curFrame.V.pixelPtr(y, 0), X/2);
+			}
+		}
 	}
 
 	curFrame.swap(prevFrame);
