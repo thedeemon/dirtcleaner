@@ -109,13 +109,17 @@ YV12Plane::~YV12Plane()
 void YV12Plane::swap(YV12Plane &other)
 {
 	Y.swap(other.Y);	U.swap(other.U);	V.swap(other.V);
+	int t = other.nFrame;
+	other.nFrame = nFrame;
+	nFrame = t;
 }
 
-void YV12Plane::copyFrom(const VDXPixmap &src)
+void YV12Plane::copyFrom(const VDXPixmap &src, int frameNumber)
 {
 	Y.copyFrom((BYTE*)src.data, src.w, src.h, src.pitch);
 	U.copyFrom((BYTE*)src.data2, src.w/2, src.h/2, src.pitch2);
 	V.copyFrom((BYTE*)src.data3, src.w/2, src.h/2, src.pitch3);
+	nFrame = frameNumber;
 }
 
 template<class T>
@@ -310,38 +314,57 @@ void Cleaner::RunCommand(int command, void *params, CSquadWorker *sqworker)
 {
 	ProcessParams *ps = (ProcessParams*) params;
 	if (command==1)
-		processPart(ps->src, ps->dst, ps->nFrame, sqworker);
+		processPart(ps->dst, sqworker);
 	else 
 		degrainYV12Plane(curFrame, *ps->dst, sqworker);	
 }
 
-void Cleaner::process(const VDXPixmap *src, const VDXPixmap *dst, int nFrame)
+void Cleaner::process(VDXFBitmap *const *srcFrames, const VDXPixmap *dst, int nFrame)
 {
 	ProcessParams params;
-	params.src = src;
 	params.dst = dst;
-	params.nFrame = nFrame;
 	degrainInstead = false;
 
-	if (nFrame < 2) {		
-		if (nFrame==0) {
-			prevFrame.copyFrom(*src);
-			copyFrame(*src, *dst);
-			return;
-		} else {
-			curFrame.copyFrom(*src);
-			degrainInstead = true;
-		}		
+	int df = nFrame - curFrame.nFrame;
+	if (df == 1) {
+		curFrame.swap(prevFrame);
+		nextFrame.swap(curFrame);
+		nextFrame.copyFrom(*srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);		
 	} else
+	if (df == -1) {
+		curFrame.swap(nextFrame);
+		prevFrame.swap(curFrame);
+		prevFrame.copyFrom(*srcFrames[0]->mpPixmap, srcFrames[0]->mFrameNumber);		
+	} else 
+	if (abs(df) > 1) { // seek happened (or just the very first frame)
+		prevFrame.copyFrom(*srcFrames[0]->mpPixmap, srcFrames[0]->mFrameNumber);		
+		curFrame.copyFrom(*srcFrames[1]->mpPixmap, srcFrames[1]->mFrameNumber);		
+		nextFrame.copyFrom(*srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);		
+		makeMatrix(vectorsP, nbx, nby);
+		makeMatrix(vectorsN, nbx, nby);
+	}
+
+	int pnFrame = nFrame == 0 ? 0 : nFrame - 1;
+	assert(prevFrame.nFrame == pnFrame);
+	assert(curFrame.nFrame == nFrame);
+	assert(nextFrame.nFrame == nFrame + 1);
+
+	if (nFrame < 2) {		
+		//copyFrame(*srcFrames[1]->mpPixmap, *dst);
+		degrainInstead = true;
+	} else {
+		for(int by=0;by<nby;by++)
+			for(int bx=0;bx<nbx;bx++) {
+				haveMVp[by][bx] = false;
+				haveMVn[by][bx] = false;
+				motion[by][bx] = 0;
+			}
+		
 		pSquad->RunParallel(1, &params, this);
+	}
 
 	if (degrainInstead) 
 		pSquad->RunParallel(2, &params, this);
-
-	if (nFrame >= 2) {
-		curFrame.swap(prevFrame);
-		nextFrame.swap(curFrame);
-	}	
 }
 
 
@@ -351,9 +374,9 @@ void Cleaner::process(const VDXPixmap *src, const VDXPixmap *dst, int nFrame)
 #define GMTHRESHOLD 0.4
 //#define SHOW_COPIED_BLOCKS
 
-void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFrame, CSquadWorker *sqworker)
+void Cleaner::processPart(const VDXPixmap *pDst, CSquadWorker *sqworker)
 {
-	const VDXPixmap &src = *pSrc;
+	//const VDXPixmap &src = *pSrc;
 	const VDXPixmap &dst = *pDst;
 	
 	const int X = curFrame.Y.width;
@@ -364,18 +387,6 @@ void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFra
 	const int lastThread = sqworker->NumThreads() - 1;
 	const int myNum = sqworker->MyNum();
 	
-	if (myNum == lastThread)
-		nextFrame.copyFrom(src);
-
-	if (myNum == 0) {
-		for(int by=0;by<nby;by++)
-			for(int bx=0;bx<nbx;bx++) {
-				haveMVp[by][bx] = false;
-				haveMVn[by][bx] = false;
-				motion[by][bx] = 0;
-			}
-	}
-
 	auto ddata = (BYTE*)dst.data;
 	const int dpitch = dst.pitch;
 	auto ddata2 = (BYTE*)dst.data2;
@@ -386,8 +397,6 @@ void Cleaner::processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFra
 	int by0 = 0, bys = nby;
 	sqworker->GetSegment(nby, by0, bys);
 	const int by1 = by0 + bys;
-
-	sqworker->Sync();
 
 	for(int bx=0;bx<nbx;bx++) {
 		if (myNum>0)

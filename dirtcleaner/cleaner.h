@@ -65,18 +65,19 @@ public:
 class YV12Plane {
 public:
 	Plane Y,U,V;
+	int nFrame;
 	void create(int w, int h);
 	void destroy();
+	YV12Plane() : nFrame(-11) {}
 	~YV12Plane();
 	void swap(YV12Plane &other);
-	void copyFrom(const VDXPixmap &src);
+	void copyFrom(const VDXPixmap &src, int frameNumber);
 };
 
 typedef std::vector< std::vector< Vec > > VecMatrix;
 
 struct ProcessParams {
-	const VDXPixmap *src, *dst;
-	int nFrame;
+	const VDXPixmap *dst;
 };
 
 class Cleaner : public ISquadJob {
@@ -85,8 +86,8 @@ public:
 	virtual ~Cleaner();
 
 	void init(int w, int h);
-	void process(const VDXPixmap *src, const VDXPixmap *dst, int nFrame);
-	void processPart(const VDXPixmap *pSrc, const VDXPixmap *pDst, int nFrame, CSquadWorker *sqworker);
+	void process(VDXFBitmap *const * srcFrames, const VDXPixmap *dst, int nFrame);
+	void processPart(const VDXPixmap *pDst, CSquadWorker *sqworker);
 
 	virtual void RunCommand(int command, void *params, CSquadWorker *sqworker);
 

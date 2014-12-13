@@ -32,7 +32,24 @@ long paramProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff) {
     // set old depth value to zero to indicate new pixmap layout should be used
     fa->dst.depth = 0;
 
-	return FILTERPARAM_SWAP_BUFFERS | FILTERPARAM_SUPPORTS_ALTFORMATS | FILTERPARAM_HAS_LAG(1);
+	return FILTERPARAM_SWAP_BUFFERS | FILTERPARAM_SUPPORTS_ALTFORMATS;// | FILTERPARAM_HAS_LAG(1);
+}
+
+sint64 prefetchProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff, sint64 frame)
+{
+	return frame;
+}
+
+bool prefetchProc2(const VDXFilterActivation *fa, const VDXFilterFunctions *ff, sint64 frame, IVDXVideoPrefetcher *prefetcher)
+{
+	int fr = frame;
+	char str[256];
+	sprintf(str, "prefetch fr=%d", fr);
+	log(str);
+	for(int f=fr-1; f<=fr+1; f++)
+		prefetcher->PrefetchFrame(0, f, f);
+	prefetcher->PrefetchFrameSymbolic(0, frame);
+	return true;
 }
 
 int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff) {
@@ -49,7 +66,12 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff) {
 		SHOW(psi->lCurrentFrame);
 		fn = psi->lCurrentFrame;
 	} else log("pfsi is null");
-	c->process(src, dst, fn);	
+	SHOW(fa->mSourceFrameCount);
+	assert(fa->mSourceFrameCount==3);
+	for(int i=0;i<fa->mSourceFrameCount;i++)
+		SHOW(fa->mpSourceFrames[i]->mFrameNumber);
+	SHOW(fa->src.mFrameNumber);
+	c->process(fa->mpSourceFrames, dst, fn);	
 	return 0;
 }
 
@@ -103,7 +125,7 @@ static struct VDXFilterDefinition myfilter_definition={
 	0,0, //&script_obj, fssProc,
 	stringProc2,0,0,0,
 	0, 0,
-	0,0    
+	prefetchProc2,0    
 };
 
 
