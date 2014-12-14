@@ -9,6 +9,8 @@ syntax: glob
 *.sdf
 *.suo
 *.opensdf
+*.vsp
+*.ipgset
 Debug/*
 Release/*
 ipch/*

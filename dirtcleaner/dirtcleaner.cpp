@@ -91,6 +91,46 @@ int endProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff) {
 	return 0;
 }
 
+extern "C" __declspec(dllexport) void __cdecl benchmark(int w, int h, BYTE *frm0, BYTE *frm1, BYTE *frm2) {
+	Cleaner c;
+	c.init(w, h);
+	VDXPixmap dst;
+	dst.data = calloc(w*h,1);
+	dst.data2 = calloc(w*h/4, 1);
+	dst.data3 = calloc(w*h/4, 1);
+	dst.pitch = w;
+	dst.pitch2 = w/2;
+	dst.pitch3 = w/3;
+	dst.w = w;
+	dst.h = h;
+
+	BYTE *frms[3] = {frm0, frm1, frm2};
+	VDXPixmap mps[3];
+	VDXFBitmap bmps[3];
+	for(int i=0;i<3;i++) {
+		mps[i].pitch = w;
+		mps[i].pitch2 = w/2;
+		mps[i].pitch3 = w/2;
+		mps[i].data = frms[i];
+		mps[i].data2 = frms[i] + w*h;
+		mps[i].data3 = frms[i] + w*h + w*h/4;
+		mps[i].w = w;
+		mps[i].h = h;
+		bmps[i].mpPixmap = &mps[i];
+	}
+
+	VDXFBitmap *frames[3] = { &bmps[0], &bmps[1], &bmps[2] };
+	for(int n=1;n<101;n++) {
+		printf("\r%d..   ", n);
+		int fr = n*5;
+		bmps[0].mFrameNumber = fr - 1;
+		bmps[1].mFrameNumber = fr;
+		bmps[2].mFrameNumber = fr + 1;
+		c.process(frames, &dst, fr);
+	}
+
+}
+
 int configProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, VDXHWND hwndParent) {
     MyFilterData* pData = (MyFilterData*)fa->filter_data;
 	//pData->ifp = fa->ifp;

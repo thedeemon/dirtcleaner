@@ -67,6 +67,7 @@
       <AdditionalIncludeDirectories>C:\vc\VDPluginSDK\include</AdditionalIncludeDirectories>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
+      <GenerateAlternateCodePaths>SSE2</GenerateAlternateCodePaths>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
