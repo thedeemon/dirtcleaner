@@ -8,6 +8,22 @@
 #include <vd2/plugin/vdvideofilt.h>
 #include <vector>
 
+//options
+#define OLD_VEC
+#define SHOW_COPIED_BLOCKS
+//#define USE_FPLANE
+
+//algorithm parameters
+#define PTHRESHOLD 6
+#define NOISE_AMPL 25
+#define NOISY 4
+#define GMTHRESHOLD 0.4
+
+//worker threads commands
+#define CMD_PROCESS_PART 1
+#define CMD_DEGRAIN      2
+#define CMD_COPY         3
+
 void log(const char* str);
 void logn(const char* str, int n);
 #define SHOW(x) logn(#x, x);
@@ -20,14 +36,14 @@ public:
 	MonoBlock() { /*memset(data, 255, W*W);*/ } //for debug
 };
 
-template<class T>
+template<class T, bool Zero = true>
 class TVec
 {
 public:
 	T x, y;
 
 	TVec(T vx, T vy) : x(vx), y(vy) {}
-	TVec() : x(0), y(0) {}	
+	TVec() { if (Zero) { x=0; y=0; } }	
 	TVec operator+(const TVec &a) const	{	return TVec(x + a.x, y + a.y);	}
 	TVec operator-(const TVec &a) const	{	return TVec(x - a.x, y - a.y);	}
 	TVec& operator+=(const TVec &a)		{	x += a.x; y += a.y;	return *this;	}	
@@ -42,36 +58,54 @@ public:
 typedef TVec<int> Vec;
 typedef TVec<float> FVec;
 
-class Plane
-{
+class Plane {
 public: 
 	Plane() : stride(0), width(0), height(0), border(32), data(NULL), offset(0), ownData(false) {}
-	~Plane();
+	virtual ~Plane();
 	void create(int w, int h);
 	void destroy();
-	void copyFrom(BYTE* data, int w, int h, int pitch);
-	template<int W> void readBlock_f(Vec v, MonoBlock<W, float> &block);
+	void copyFrom(BYTE* srcdata, int w, int h, int pitch, int y0, int ys);
+#ifndef USE_FPLANE
+	void readBlockf(Vec v, MonoBlock<8, float> &block);
+#endif
 	void swap(Plane &other);
 	void makeBorder(int startRow, int nRows);
 	BYTE* pixelPtr(int y, int x);
 
 	BYTE *data; //16 bytes aligned, includes border
+	int stride, border, offset;
+	//BYTE **rows;
 	int height;
 	int width;
-	int stride, border, offset;
 	bool ownData;
 };
 
+#ifdef USE_FPLANE
+class FPlane : public Plane {
+	float *fdata;
+public:
+	FPlane() : Plane(), fdata(NULL) {}
+	~FPlane();
+	void create(int w, int h);	
+	void swap(FPlane &other);
+	void copyFrom(BYTE* srcdata, int w, int h, int pitch, int y0, int ys);
+	void readBlockf(Vec v, MonoBlock<8, float> &block);
+};
+#else
+#define FPlane Plane
+#endif
+
 class YV12Plane {
 public:
-	Plane Y,U,V;
+	FPlane Y;
+	Plane U,V;
 	int nFrame;
 	void create(int w, int h);
 	void destroy();
 	YV12Plane() : nFrame(-11) {}
 	~YV12Plane();
 	void swap(YV12Plane &other);
-	void copyFrom(const VDXPixmap &src, int frameNumber);
+	void copyFrom(const VDXPixmap &src, int frameNumber, int y0, int ys);
 };
 
 typedef std::vector< std::vector< Vec > > VecMatrix;
@@ -96,6 +130,7 @@ protected:
 	Vec getMVn(int bx, int by);
 	Vec getMVCenter(int bx, int by, bool prev);
 	void flowBlock(int bx, int by, bool prev, BYTE* yv12block); // yv12block [8*8 + 4*4 + 4*4]
+	void parallelCopy(YV12Plane *yv12plane, const VDXPixmap* pixmap, int frameNumber);
 
 	int nbx, nby;
 	YV12Plane prevFrame, curFrame, nextFrame;
@@ -110,24 +145,4 @@ public:
 	int inited;
 };
 
-////////////////////////////////////////////////////////////////////////////
-template<int W>
-void Plane::readBlock_f(Vec v, MonoBlock<W, float> &block)
-{
-	const int x0 = v.x, y0 = v.y;
-	assert(x0 >= -border); assert(y0 >= -border);
-	assert(x0 + W <= width + border); assert(y0 + W <= height + border);
-
-	int di = offset + y0 * stride + x0;
-	int si = 0;
-	const BYTE* __restrict mydata = data;
-	for(int y=0; y<W; y++) {
-		for(int x=0;x<W;x++)
-			block.data[si + x] = mydata[di + x];
-		di += stride;
-		si += W;
-	}
-}
-
-
-#endif
+#endif //H

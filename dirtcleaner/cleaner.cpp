@@ -21,6 +21,8 @@ void Plane::destroy()
 	if (ownData && data) {
 		_aligned_free(data);
 		data = NULL;
+		//free(rows);
+		//rows = NULL;
 	}
 }
 
@@ -36,6 +38,9 @@ void Plane::create(int w, int h)
 	stride = (w + 2*border + 15) & (~15);
 	data = (BYTE*)_aligned_malloc(stride * (h + 2*border), 16);
 	offset = border * stride + border;
+	//rows = (BYTE**)calloc(h + 2*border, sizeof(BYTE*));
+	//for(int y=-border; y < h + border; y++)
+	//	rows[y + border] = &data[offset + y * stride];
 	ownData = true;
 }
 
@@ -63,17 +68,16 @@ BYTE* Plane::pixelPtr(int y, int x)
 	assert(x >= -border); assert(y >= -border);
 	assert(x + 16 <= width + border); assert(y < height + border);
 	return &data[offset + y * stride + x];
+	//return rows[y + border] + x;
 }
 
-void Plane::copyFrom(BYTE* srcdata, int w, int h, int pitch)
+void Plane::copyFrom(BYTE* srcdata, int w, int h, int pitch, int y0, int ys)
 {
 	assert(w==width); assert(h==height);
-	int si = 0;
-	for(int y=0;y<h;y++) {
-		memcpy( &data[offset + y * stride], &srcdata[si], w);
-		si += pitch;
+	for(int y=y0; y<y0+ys; y++) {
+		memcpy( &data[offset + y * stride], &srcdata[y * pitch], w);		
 	}
-	makeBorder(0, height);
+	makeBorder(y0, ys);
 }
 
 void Plane::swap(Plane &other)
@@ -84,10 +88,99 @@ void Plane::swap(Plane &other)
 	BYTE *tmp = other.data;
 	other.data = data;
 	data = tmp;
+
+	//BYTE** rs = other.rows;
+	//other.rows = rows;
+	//rows = rs;
+
 	bool tmpOwn = other.ownData;
 	other.ownData = ownData;
 	ownData = tmpOwn;
 }
+
+#ifndef USE_FPLANE
+void Plane::readBlockf(Vec v, MonoBlock<8, float> &block)
+{
+	const int W = 8;
+	const int x0 = v.x, y0 = v.y;
+	assert(x0 >= -border); assert(y0 >= -border);
+	assert(x0 + W <= width + border); assert(y0 + W <= height + border);
+
+	int di = offset + y0 * stride + x0;
+	int si = 0;
+	const BYTE* __restrict mydata = data;
+	for(int y=0; y<W; y++) {
+		for(int x=0;x<W;x++)
+			block.data[si + x] = mydata[di + x];
+		di += stride;
+		si += W;
+	}
+}
+#endif
+
+//////////////////////////////////////////////////////////////
+
+#ifdef USE_FPLANE
+FPlane::~FPlane() {
+	if (fdata) {
+		_aligned_free(fdata);
+		fdata = NULL;
+	}
+}
+
+void FPlane::create(int w, int h) {
+	Plane::create(w, h);
+	fdata = (float*)_aligned_malloc(stride * (h + 2*border) * sizeof(float), 16);
+}
+
+void FPlane::swap(FPlane &other) {
+	Plane::swap(other);
+	float *tmp = other.fdata;
+	other.fdata = fdata;
+	fdata = tmp;
+}
+
+void FPlane::copyFrom(BYTE* srcdata, int w, int h, int pitch, int y0, int ys) {
+	assert(w==width); assert(h==height);
+	for(int y=y0; y<y0+ys; y++) {
+		int si = pitch * y;
+		memcpy( &data[offset + y * stride], &srcdata[si], w);
+		makeBorder(y, 1);
+		const int di = (y + border) * stride;
+		for(int x=0; x < width + border * 2; x++)
+			fdata[di + x] = data[di + x];
+	}
+	if (y0==0) {
+		for(int x=0; x < border * stride; x++)
+			fdata[x] = data[x];
+	}
+	if (y0 + ys == height) {
+		const int di = (border + height) * stride;
+		for(int x=0; x < border * stride; x++)
+			fdata[di + x] = data[di + x];
+	}
+}
+
+void FPlane::readBlockf(Vec v, MonoBlock<8, float> &block)
+{
+	const int W = 8;
+	const int x0 = v.x, y0 = v.y;
+	assert(x0 >= -border); assert(y0 >= -border);
+	assert(x0 + W <= width + border); assert(y0 + W <= height + border);
+
+	int di = offset + y0 * stride + x0;
+	int si = 0;
+	const float* __restrict mydata = fdata;
+	for(int y=0; y<W; y++) {
+		for(int x=0;x<W;x++)
+			block.data[si + x] = mydata[di + x];
+		di += stride;
+		si += W;
+	}
+}
+#endif
+
+//////////////////////////////////////////////////////////////
 
 void YV12Plane::create(int w, int h) 
 {
@@ -114,11 +207,12 @@ void YV12Plane::swap(YV12Plane &other)
 	nFrame = t;
 }
 
-void YV12Plane::copyFrom(const VDXPixmap &src, int frameNumber)
+void YV12Plane::copyFrom(const VDXPixmap &src, int frameNumber, int y0, int ys)
 {
-	Y.copyFrom((BYTE*)src.data, src.w, src.h, src.pitch);
-	U.copyFrom((BYTE*)src.data2, src.w/2, src.h/2, src.pitch2);
-	V.copyFrom((BYTE*)src.data3, src.w/2, src.h/2, src.pitch3);
+	assert((y0 & 1)==0); assert((ys & 1)==0); assert(ys > 1);
+	Y.copyFrom((BYTE*)src.data, src.w, src.h, src.pitch, y0, ys);
+	U.copyFrom((BYTE*)src.data2, src.w/2, src.h/2, src.pitch2, y0/2, ys/2);
+	V.copyFrom((BYTE*)src.data3, src.w/2, src.h/2, src.pitch3, y0/2, ys/2);
 	nFrame = frameNumber;
 }
 
@@ -246,8 +340,11 @@ void degrainYV12Plane(YV12Plane &src, const VDXPixmap &dst, CSquadWorker *sqwork
 
 void Cleaner::flowBlock(int bx, int by, bool prev, BYTE* yv12block) // yv12block [8*8 + 4*4 + 4*4]
 {
-	Vec vecs[8][8];
+	TVec<int, false> vecs[8][8];
+	//Vec vecs2[8][8];
 	YV12Plane &frame = prev ? prevFrame : nextFrame;
+	const float dkx = 0.125;
+
 	for(int hy=0;hy<2;hy++) {
 		const float ky0 = hy==0 ? 0.5 : 0.0;
 		for(int hx=0;hx<2;hx++) {
@@ -259,22 +356,44 @@ void Cleaner::flowBlock(int bx, int by, bool prev, BYTE* yv12block) // yv12block
 			const float kx0 = hx==0 ? 0.5 : 0.0;			
 			for(int y=0;y<4;y++) {
 				const float ky = y / 8.0 + ky0;
+#ifndef OLD_VEC
+				const float dk0 = -dkx * (1 - ky);
+				const float dk1 = dkx * (1 - ky);
+				const float dk2 = -dkx * ky;
+				const float dk3 = dkx * ky;
+				const FVec dv = v0 * dk0 + v1 * dk1 + v2 * dk2 + v3 * dk3;
+				const FVec point2 = v0*((1-kx0)*(1-ky)) + v1*(kx0*(1-ky)) + v2 * ((1-kx0)*ky) + v3 * (kx0*ky);
+#endif
 				for(int x=0;x<4;x++) {
+#ifdef OLD_VEC
 					const float kx = x / 8.0 + kx0;
-					const float k0 = ((1-kx)*(1-ky));
-					const float k1 = (kx*(1-ky));
-					const float k2 = ((1-kx)*ky);
+					const float k0 = (1-kx)*(1-ky);
+					const float k1 = kx*(1-ky);
+					const float k2 = (1-kx)*ky;
 					const float k3 = kx*ky;
 					//const float kk = k0+k1+k2+k3;
 					//assert(kk==1.0);
 
-					FVec point = v0*k0 + v1*k1 +
-									v2*k2 + v3*k3;
-					Vec ipoint(point.x + 0.5, point.y + 0.5);
+					FVec point = v0*k0 + v1*k1 + v2*k2 + v3*k3;
+					
+
+					//FVec point2 = v0*k0_ + v1*k1_ + v2*k2_ + v3*k3_ = point + dv
+					// dv = v0 * (k0_ - k0) + v1 * (k1_ - k1) + v2 * (k2_ - k2) + v3 * (k3_ - k3)
+					// dkx = kx_ - kx = 0.125
+					// dk0 = (1-kx_)*(1-ky) - (1-kx)*(1-ky) = (1-kx_ -1 + kx) * (1-ky) = -dkx * (1 - ky)
+					// dk1 = kx_*(1-ky) - kx*(1-ky) = dkx * (1 - ky)
+					// dk2 = (1-kx_)*ky - (1-kx)*ky = -dkx * ky
+					// dk3 = dkx * ky
+#else
+					FVec point = point2 + dv * x;
+#endif
+					TVec<int, false> ipoint(point.x + 0.5, point.y + 0.5);
 					vecs[hy*4+y][hx*4+x] = ipoint;
 
+					//assert(ipoint2 == ipoint);
 					BYTE* p = frame.Y.pixelPtr(ipoint.y, ipoint.x);
 					yv12block[(hy*4+y) * 8 + hx*4 + x] = *p;
+					//point2 += dv;
 				}//x
 			}//y
 		}//hx
@@ -282,7 +401,7 @@ void Cleaner::flowBlock(int bx, int by, bool prev, BYTE* yv12block) // yv12block
 
 	for(int y=0;y<4;y++) {				
 		for(int x=0;x<4;x++) {
-			Vec uv = vecs[y*2][x*2].div2();
+			TVec<int, false> uv = vecs[y*2][x*2].div2();
 			BYTE *p = frame.U.pixelPtr(uv.y, uv.x);
 			yv12block[64 + y * 4 + x] = *p;
 			BYTE *p3 = frame.V.pixelPtr(uv.y, uv.x);
@@ -310,17 +429,35 @@ int horEdge(BYTE *p, int pitch) //compares with upper line
 	return sum;
 }
 
-void Cleaner::RunCommand(int command, void *params, CSquadWorker *sqworker)
-{
+struct CopyParams {
+	YV12Plane *yv12plane; const VDXPixmap* pixmap; int frameNumber;
+};
+
+
+void Cleaner::RunCommand(int command, void *params, CSquadWorker *sqworker) {
 	ProcessParams *ps = (ProcessParams*) params;
-	if (command==1)
-		processPart(ps->dst, sqworker);
-	else 
-		degrainYV12Plane(curFrame, *ps->dst, sqworker);	
+	switch(command) {
+		case CMD_PROCESS_PART: 	processPart(ps->dst, sqworker); break;
+		case CMD_DEGRAIN: 		degrainYV12Plane(curFrame, *ps->dst, sqworker);	break;
+		case CMD_COPY: {
+			CopyParams *cp = (CopyParams*) params;
+			int H = cp->yv12plane->Y.height;
+			int y0 = 0, ys = H;
+			sqworker->GetSegment(H/2, y0, ys);
+			y0 *= 2; ys *= 2;
+			if (ys > 1)
+				cp->yv12plane->copyFrom(*cp->pixmap, cp->frameNumber, y0, ys);
+		}
+	}
 }
 
-void Cleaner::process(VDXFBitmap *const *srcFrames, const VDXPixmap *dst, int nFrame)
-{
+void Cleaner::parallelCopy(YV12Plane *yv12plane, const VDXPixmap* pixmap, int frameNumber) {
+	CopyParams ps;
+	ps.yv12plane = yv12plane; ps.pixmap = pixmap; ps.frameNumber = frameNumber;
+	pSquad->RunParallel(CMD_COPY, &ps, this);
+}
+
+void Cleaner::process(VDXFBitmap *const *srcFrames, const VDXPixmap *dst, int nFrame) {
 	ProcessParams params;
 	params.dst = dst;
 	degrainInstead = false;
@@ -329,17 +466,22 @@ void Cleaner::process(VDXFBitmap *const *srcFrames, const VDXPixmap *dst, int nF
 	if (df == 1) {
 		curFrame.swap(prevFrame);
 		nextFrame.swap(curFrame);
-		nextFrame.copyFrom(*srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);		
+		//nextFrame.copyFrom(*srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);		
+		parallelCopy(&nextFrame, srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);
 	} else
 	if (df == -1) {
 		curFrame.swap(nextFrame);
 		prevFrame.swap(curFrame);
-		prevFrame.copyFrom(*srcFrames[0]->mpPixmap, srcFrames[0]->mFrameNumber);		
+		//prevFrame.copyFrom(*srcFrames[0]->mpPixmap, srcFrames[0]->mFrameNumber);	
+		parallelCopy(&prevFrame, srcFrames[0]->mpPixmap, srcFrames[0]->mFrameNumber);
 	} else 
 	if (abs(df) > 1) { // seek happened (or just the very first frame)
-		prevFrame.copyFrom(*srcFrames[0]->mpPixmap, srcFrames[0]->mFrameNumber);		
-		curFrame.copyFrom(*srcFrames[1]->mpPixmap, srcFrames[1]->mFrameNumber);		
-		nextFrame.copyFrom(*srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);		
+		//prevFrame.copyFrom(*srcFrames[0]->mpPixmap, srcFrames[0]->mFrameNumber);		
+		//curFrame.copyFrom(*srcFrames[1]->mpPixmap, srcFrames[1]->mFrameNumber);		
+		//nextFrame.copyFrom(*srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);		
+		parallelCopy(&prevFrame, srcFrames[0]->mpPixmap, srcFrames[0]->mFrameNumber);
+		parallelCopy(&curFrame, srcFrames[1]->mpPixmap, srcFrames[1]->mFrameNumber);
+		parallelCopy(&nextFrame, srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);
 		makeMatrix(vectorsP, nbx, nby);
 		makeMatrix(vectorsN, nbx, nby);
 	}
@@ -360,19 +502,12 @@ void Cleaner::process(VDXFBitmap *const *srcFrames, const VDXPixmap *dst, int nF
 				motion[by][bx] = 0;
 			}
 		
-		pSquad->RunParallel(1, &params, this);
+		pSquad->RunParallel(CMD_PROCESS_PART, &params, this);
 	}
 
 	if (degrainInstead) 
-		pSquad->RunParallel(2, &params, this);
+		pSquad->RunParallel(CMD_DEGRAIN, &params, this);
 }
-
-
-#define PTHRESHOLD 6
-#define NOISE_AMPL 25
-#define NOISY 4
-#define GMTHRESHOLD 0.4
-//#define SHOW_COPIED_BLOCKS
 
 void Cleaner::processPart(const VDXPixmap *pDst, CSquadWorker *sqworker)
 {
@@ -628,12 +763,12 @@ static Vec around[8] =   { Vec(-1,-1), Vec(0,-1), Vec(1,-1),
 static Vec hecks[6] = { Vec(1,-2), Vec(2,0), Vec(1,2), 
 	                    Vec(-1,2), Vec(-2,0), Vec(-1,-2) };
 
-Vec lookAroundLP_f(Plane &plane, MonoBlock<8,float> &sblock, Vec v0, float &bestd)
+Vec lookAroundLP_f(FPlane &plane, MonoBlock<8,float> &sblock, Vec v0, float &bestd)
 {
 	MonoBlock<8,float> block;
 	int bestn = -1;
 	for(int n=0; n<8; n++) {	
-		plane.readBlock_f(v0 + around[n], block);
+		plane.readBlockf(v0 + around[n], block);
 		auto d = fdiff(block, sblock);
 		if (d<bestd) {
 			bestd = d;
@@ -646,12 +781,12 @@ Vec lookAroundLP_f(Plane &plane, MonoBlock<8,float> &sblock, Vec v0, float &best
 }
 
 
-Vec findBlockHex_f(Plane &plane, MonoBlock<8,float> &sblock, Vec v0, float &bestd, bool skip0)
+Vec findBlockHex_f(FPlane &plane, MonoBlock<8,float> &sblock, Vec v0, float &bestd, bool skip0)
 {
 	MonoBlock<8,float> block;
 	Vec cv = v0;
 	if (!skip0) { // if skip0 bestd already has diff for v0
-		plane.readBlock_f(v0, block);
+		plane.readBlockf(v0, block);
 		bestd = fdiff(block, sblock);
 	}
 	int start = 0, end = 6, lastbestn, bestn = -1; 
@@ -663,7 +798,7 @@ Vec findBlockHex_f(Plane &plane, MonoBlock<8,float> &sblock, Vec v0, float &best
 		if (cv.x < -W || cv.y < -W || cv.x > X || cv.y > Y) break;
 		for(int n=start;n<end;n++) {
 			int rn = n % 6;
-			plane.readBlock_f(cv + hecks[rn], block);
+			plane.readBlockf(cv + hecks[rn], block);
 			auto d = fdiff(block, sblock);
 			if (d < bestd) {
 				bestd = d;
@@ -681,13 +816,13 @@ Vec findBlockHex_f(Plane &plane, MonoBlock<8,float> &sblock, Vec v0, float &best
 	return cv;
 }
 
-void testStartVec(Plane &plane, MonoBlock<8,float> &srcLuma, Vec pos, Vec candidate, Vec &startVec, float &bestd)
+void testStartVec(FPlane &plane, MonoBlock<8,float> &srcLuma, Vec pos, Vec candidate, Vec &startVec, float &bestd)
 {
 	MonoBlock<8, float> block;
 	Vec v = pos + candidate;
 	const int W = 8, X = plane.width, Y = plane.height;
 	if (v.x < -W || v.y < -W || v.x >= X || v.y >= Y) return; //out of image, not interested
-	plane.readBlock_f(v, block);
+	plane.readBlockf(v, block);
 	float d = fdiff(block, srcLuma);
 	if (d < bestd) {
 		bestd = d;
@@ -695,7 +830,7 @@ void testStartVec(Plane &plane, MonoBlock<8,float> &srcLuma, Vec pos, Vec candid
 	}
 }
 
-void testCandidates(Plane &plane, MonoBlock<8,float> &srcLuma, Vec pos, int bx, int by, VecMatrix &vectors, Vec &startVec, float &bestd)
+void testCandidates(FPlane &plane, MonoBlock<8,float> &srcLuma, Vec pos, int bx, int by, VecMatrix &vectors, Vec &startVec, float &bestd)
 {
 	Vec vs[6], cands[6];
 	int nc = 1;
@@ -726,7 +861,7 @@ void testCandidates(Plane &plane, MonoBlock<8,float> &srcLuma, Vec pos, int bx, 
 }
 
 
-Vec motionSearch(int bx, int by, MonoBlock<8, float> &srcBlock, Plane &plane, VecMatrix &vectors) // => offset vector
+Vec motionSearch(int bx, int by, MonoBlock<8, float> &srcBlock, FPlane &plane, VecMatrix &vectors) // => offset vector
 {
 	float bestd = 10000000;	
 	const Vec v0(bx*8, by*8);
@@ -750,7 +885,7 @@ Vec Cleaner::getMVp(int bx, int by)
 	
 	MonoBlock<8, float> srcBlock;
 	const Vec v0(bx*8, by*8);
-	curFrame.Y.readBlock_f(v0, srcBlock);
+	curFrame.Y.readBlockf(v0, srcBlock);
 	Vec mv = motionSearch(bx, by, srcBlock, prevFrame.Y, vectorsP);
 	vectorsP[by][bx] = mv;
 	haveMVp[by][bx] = true;
@@ -768,7 +903,7 @@ Vec Cleaner::getMVn(int bx, int by)
 	
 	MonoBlock<8, float> srcBlock;
 	const Vec v0(bx*8, by*8);
-	curFrame.Y.readBlock_f(v0, srcBlock);
+	curFrame.Y.readBlockf(v0, srcBlock);
 	Vec mv = motionSearch(bx, by, srcBlock, nextFrame.Y, vectorsN);
 	vectorsN[by][bx] = mv;
 	haveMVn[by][bx] = true;
