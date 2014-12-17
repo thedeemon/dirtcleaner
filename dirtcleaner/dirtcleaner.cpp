@@ -3,20 +3,49 @@
 #include <WindowsX.h>
 #include <stdio.h>
 #include "cleaner.h"
+#include "resource.h"
+#include <commctrl.h>
+#include <shellapi.h>
 
 struct MyFilterData {
+	int noiseLevel, numPixels;
+	bool markUnfiltered;
+	int inited;
+
+	MyFilterData() : noiseLevel(25), numPixels(4), pCleaner(NULL), markUnfiltered(false), inited(0) {}
+
+	void init() {
+		log("MyFilterData.init");
+		noiseLevel = 25; numPixels = 4; markUnfiltered = false;
+		inited = 1;
+	}
+
 	Cleaner *cln() {
-		if (pCleaner==NULL) 
-			pCleaner = new Cleaner();
+		if (pCleaner==NULL) {
+			pCleaner = new Cleaner(); 	
+		}
 		return pCleaner;
 	}
 
 	void deinit() {
+		log("MyFilterData.deinit");
 		if (pCleaner) {
 			delete pCleaner;
-			pCleaner = NULL;
+			pCleaner = NULL;			
 		}
 	}
+
+	void apply() {
+		log("MyFilterData.apply");
+		if (!pCleaner) {
+			log("MyFilterData.apply: pCleaner is null! returning");
+			return;
+		}
+		pCleaner->noiseAmplitude = noiseLevel;
+		pCleaner->maxNoisyPixels = numPixels;
+		pCleaner->markUnfiltered = markUnfiltered;
+	}
+
 private:
 	Cleaner *pCleaner;
 };
@@ -58,8 +87,12 @@ int runProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff) {
 	auto dst = fa->dst.mpPixmap;
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
 	Cleaner *c = pData->cln();
-	if (c->inited==0) 
+	if (c->inited==0) { 
+		if (pData->inited==0)
+			pData->init();
+		pData->apply();
 		c->init(src->w, src->h);
+	}
 	VDXFilterStateInfo *psi = fa->pfsi;
 	int fn = 0;
 	if (psi) {
@@ -80,6 +113,9 @@ int startProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff) {
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
 	auto src = fa->src.mpPixmap;
 	Cleaner *c = pData->cln();
+	if (pData->inited==0)
+		pData->init();
+	pData->apply();
 	c->init(src->w, src->h);
 	return 0;
 }
@@ -120,7 +156,7 @@ extern "C" __declspec(dllexport) void __cdecl benchmark(int w, int h, BYTE *frm0
 	}
 
 	VDXFBitmap *frames[3] = { &bmps[0], &bmps[1], &bmps[2] };
-	for(int n=1;n<101;n++) {
+	for(int n=1;n<201;n++) {
 		printf("\r%d..   ", n);
 		int fr = n*5;
 		bmps[0].mFrameNumber = fr - 1;
@@ -131,20 +167,109 @@ extern "C" __declspec(dllexport) void __cdecl benchmark(int w, int h, BYTE *frm0
 
 }
 
+extern HINSTANCE g_hInst;
+
+INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lParam) {
+	MyFilterData* pData = (MyFilterData*)GetWindowLongPtr(hdlg, DWLP_USER);
+
+    switch(msg) {
+        case WM_INITDIALOG:
+			log("init dialog");
+            SetWindowLongPtr(hdlg, DWLP_USER, lParam);
+			pData = (MyFilterData*)lParam;
+			if (pData->inited==0) pData->init();
+
+			SendMessage(GetDlgItem(hdlg, IDC_NOISELEVELSLIDER), TBM_SETRANGE, 0, MAKELONG(0, 100)); 
+			SendMessage(GetDlgItem(hdlg, IDC_NOISELEVELSLIDER), TBM_SETPOS, 1, pData->noiseLevel); 
+			SetDlgItemInt(hdlg, IDC_NOISELEVEL, pData->noiseLevel, FALSE);
+
+			SendMessage(GetDlgItem(hdlg, IDC_COUNTSLIDER), TBM_SETRANGE, 0, MAKELONG(0, 60)); 
+			SendMessage(GetDlgItem(hdlg, IDC_COUNTSLIDER), TBM_SETPOS, 1, pData->numPixels); 
+			SetDlgItemInt(hdlg, IDC_COUNT, pData->numPixels, FALSE);
+
+            CheckDlgButton(hdlg, IDC_MARKUNFILTERED, pData->markUnfiltered ? BST_CHECKED : BST_UNCHECKED);
+
+			return TRUE;
+		case WM_HSCROLL: {
+			HWND h = (HWND)lParam;
+			UINT id = GetWindowLong(h, GWL_ID);
+			int x;
+			switch(id) {
+			case IDC_NOISELEVELSLIDER:
+				x = SendMessage(h, TBM_GETPOS, 0, 0); 
+				//pData->noiseLevel = x;
+				SetDlgItemInt(hdlg, IDC_NOISELEVEL, x, FALSE);
+				break;
+			case IDC_COUNTSLIDER:
+				x = SendMessage(h, TBM_GETPOS, 0, 0); 
+				//pData->numPixels = x;
+				SetDlgItemInt(hdlg, IDC_COUNT, x, FALSE);
+				break;
+			}
+			SetWindowLong(hdlg, DWLP_MSGRESULT, 0);
+			return TRUE;
+		} break;
+		case WM_COMMAND:
+			switch(LOWORD(wParam)) {
+				case IDOK:
+					log("OK btn pressed");
+					pData->noiseLevel = GetDlgItemInt(hdlg, IDC_NOISELEVEL, NULL, FALSE);
+					pData->numPixels = GetDlgItemInt(hdlg, IDC_COUNT, NULL, FALSE);
+					pData->markUnfiltered = IsDlgButtonChecked(hdlg, IDC_MARKUNFILTERED);
+					pData->apply();
+					EndDialog(hdlg, TRUE);
+					return TRUE;
+				case IDCANCEL:
+					EndDialog(hdlg, FALSE);
+					return TRUE;
+				case IDC_HOMEPAGE:
+					ShellExecute(NULL, NULL, L"http://www.infognition.com/", NULL, NULL, SW_SHOW);
+					break;
+			}
+	}//switch msg
+	return FALSE;
+}
+
 int configProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, VDXHWND hwndParent) {
     MyFilterData* pData = (MyFilterData*)fa->filter_data;
+	log("configProc");
 	//pData->ifp = fa->ifp;
-    //auto res = !DialogBoxParam(g_hInst, MAKEINTRESOURCE(IDD_SETTINGS), (HWND)hwndParent, SettingsDlgProc, (LPARAM)pData);
-    return 0;// res;
+    auto res = !DialogBoxParam(g_hInst, MAKEINTRESOURCE(IDD_OPTIONS), (HWND)hwndParent, SettingsDlgProc, (LPARAM)pData);
+    return res;
 }
 
 static void stringProc2(const VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf, int maxlen) {
 	MyFilterData* pData = (MyFilterData*)fa->filter_data;
-	//_snprintf(buf, maxlen, " (%d-%d)", pData->targetMin, pData->targetMax );
+	_snprintf(buf, maxlen, " (%d, %d)", pData->noiseLevel, pData->numPixels );
 }
 
 void stringProc(const VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf) {
 	stringProc2(fa, ff, buf, 80);
+}
+
+void configScriptFunc(IVDXScriptInterpreter *isi, void *lpVoid, VDXScriptValue *argv, int argc) 
+{
+	VDXFilterActivation *fa = (VDXFilterActivation *)lpVoid;
+	MyFilterData* pData = (MyFilterData*)fa->filter_data;
+	if (pData->inited==0) pData->init();
+	if (argc>=2) {
+		pData->noiseLevel = argv[0].asInt(); 
+		pData->numPixels = argv[1].asInt();
+	}
+}
+
+VDXScriptFunctionDef script_functions[] = {
+    { (VDXScriptFunctionPtr)configScriptFunc, "Config", "0ii" },
+    { NULL, NULL, NULL },
+};
+
+VDXScriptObject script_obj = { NULL, script_functions, NULL };
+
+bool fssProc(VDXFilterActivation *fa, const VDXFilterFunctions *ff, char *buf, int bufsize) 
+{
+	MyFilterData* pData = (MyFilterData*)fa->filter_data;
+	_snprintf(buf, bufsize, "Config(%d, %d)", pData->noiseLevel, pData->numPixels);
+	return true;
 }
 
 static struct VDXFilterDefinition myfilter_definition={
@@ -162,7 +287,7 @@ static struct VDXFilterDefinition myfilter_definition={
 	stringProc,
 	startProc,
 	endProc,
-	0,0, //&script_obj, fssProc,
+	&script_obj, fssProc,
 	stringProc2,0,0,0,
 	0, 0,
 	prefetchProc2,0    

@@ -11,6 +11,7 @@ syntax: glob
 *.opensdf
 *.vsp
 *.ipgset
+*.aps
 Debug/*
 Release/*
 ipch/*

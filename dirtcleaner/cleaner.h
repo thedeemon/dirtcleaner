@@ -10,7 +10,7 @@
 
 //options
 #define OLD_VEC
-#define SHOW_COPIED_BLOCKS
+//#define DOLOG
 //#define USE_FPLANE
 
 //algorithm parameters
@@ -116,7 +116,8 @@ struct ProcessParams {
 
 class Cleaner : public ISquadJob {
 public:
-	Cleaner() : nbx(0), nby(0), inited(0), pSquad(NULL), nThreads(0) {}
+	Cleaner() : nbx(0), nby(0), inited(0), pSquad(NULL), nThreads(0), 
+		noiseAmplitude(NOISE_AMPL), maxNoisyPixels(NOISY), markUnfiltered(false) {}
 	virtual ~Cleaner();
 
 	void init(int w, int h);
@@ -124,6 +125,9 @@ public:
 	void processPart(const VDXPixmap *pDst, CSquadWorker *sqworker);
 
 	virtual void RunCommand(int command, void *params, CSquadWorker *sqworker);
+
+	int noiseAmplitude, maxNoisyPixels;
+	bool markUnfiltered;
 
 protected:
 	Vec getMVp(int bx, int by);

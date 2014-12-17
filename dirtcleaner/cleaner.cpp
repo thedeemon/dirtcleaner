@@ -4,16 +4,22 @@
 #include <malloc.h>
 #include <dvec.h>
 
+#include <string>
+
 void log(const char* str) {
+#ifdef DOLOG
 	FILE *f = fopen("c:\\temp\\dc.log", "at");
 	fprintf(f, "%s\n", str);
 	fclose(f);
+#endif
 }
 
 void logn(const char* str, int n) {
+#ifdef DOLOG
 	FILE *f = fopen("c:\\temp\\dc.log", "at");
 	fprintf(f, "%s = %d\n", str, n);
 	fclose(f);
+#endif
 }
 
 void Plane::destroy()
@@ -457,6 +463,41 @@ void Cleaner::parallelCopy(YV12Plane *yv12plane, const VDXPixmap* pixmap, int fr
 	pSquad->RunParallel(CMD_COPY, &ps, this);
 }
 
+/*void calcDiffHist(Plane &a, Plane &b, int* tab) { //tab[256]
+	assert(a.height == b.height); assert(a.width == b.width);
+	for(int y=0;y<a.height;y++) {
+		const BYTE * const pa = a.pixelPtr(y,0);
+		const BYTE * const pb = b.pixelPtr(y,0);
+		for(int x=0;x<a.width;x++) {
+			int d = abs(pa[x] - pb[x]); 
+			tab[d]++;
+		}
+	}
+}
+
+void frameDiffHist(YV12Plane &a, YV12Plane &b, int *ytab, int *uvtab) {
+	calcDiffHist(a.Y, b.Y, ytab);
+	calcDiffHist(a.U, b.U, uvtab);
+	calcDiffHist(a.V, b.V, uvtab);
+}*/
+
+bool samePlane(Plane &a, Plane &b) {
+	assert(a.height == b.height); assert(a.width == b.width);
+	for(int y=0;y<a.height;y++)  {
+		const BYTE * const pa = a.pixelPtr(y,0);
+		const BYTE * const pb = b.pixelPtr(y,0);
+		for(int x=0;x<a.width;x++) {
+			const int d = abs(pa[x] - pb[x]); 
+			if (d > 4) return false;
+		}
+	}
+	return true;
+}
+
+bool sameFrames(YV12Plane &a, YV12Plane &b) {
+	return samePlane(a.Y, b.Y) && samePlane(a.U, b.U) && samePlane(a.V, b.V);
+}
+
 void Cleaner::process(VDXFBitmap *const *srcFrames, const VDXPixmap *dst, int nFrame) {
 	ProcessParams params;
 	params.dst = dst;
@@ -464,9 +505,14 @@ void Cleaner::process(VDXFBitmap *const *srcFrames, const VDXPixmap *dst, int nF
 
 	int df = nFrame - curFrame.nFrame;
 	if (df == 1) {
-		curFrame.swap(prevFrame);
-		nextFrame.swap(curFrame);
-		//nextFrame.copyFrom(*srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);		
+		if (sameFrames(curFrame, nextFrame)) { //ABB -> ABC
+			logn("cur === next for cur.nFrame", nFrame);
+			curFrame.nFrame = nextFrame.nFrame;
+		} else { //ABC -> BCD
+			curFrame.swap(prevFrame);
+			nextFrame.swap(curFrame);
+			//nextFrame.copyFrom(*srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);					
+		}
 		parallelCopy(&nextFrame, srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);
 	} else
 	if (df == -1) {
@@ -486,14 +532,15 @@ void Cleaner::process(VDXFBitmap *const *srcFrames, const VDXPixmap *dst, int nF
 		makeMatrix(vectorsN, nbx, nby);
 	}
 
-	int pnFrame = nFrame == 0 ? 0 : nFrame - 1;
+	/*int pnFrame = nFrame == 0 ? 0 : nFrame - 1;
 	assert(prevFrame.nFrame == pnFrame);
 	assert(curFrame.nFrame == nFrame);
-	assert(nextFrame.nFrame == nFrame + 1);
+	assert(nextFrame.nFrame == nFrame + 1);*/
 
 	if (nFrame < 2) {		
 		//copyFrame(*srcFrames[1]->mpPixmap, *dst);
 		degrainInstead = true;
+		log("nFrame < 2 => degrain");
 	} else {
 		for(int by=0;by<nby;by++)
 			for(int bx=0;bx<nbx;bx++) {
@@ -547,9 +594,9 @@ void Cleaner::processPart(const VDXPixmap *pDst, CSquadWorker *sqworker)
 
 			for(int i=0;i<64;i++) {
 				int diff = abs(yv12blockP[i] - yv12blockN[i]);
-				if (diff > NOISE_AMPL) noisypixels++;
+				if (diff > noiseAmplitude) noisypixels++;
 			}
-			bool different = noisypixels >= NOISY;
+			bool different = noisypixels >= maxNoisyPixels;
 			motion[by][bx] = different ? 1 : 0; 
 
 			if (!different) {//motion=0
@@ -672,9 +719,8 @@ void Cleaner::processPart(const VDXPixmap *pDst, CSquadWorker *sqworker)
 								ddata3[(by*4+y)*dpitch3 + (bx-1)*4 + x] = psrcV[x];
 							}//x
 						}//y
-						#ifdef SHOW_COPIED_BLOCKS
-						ddata3[(by*4)*dpitch3 + (bx-1)*4] = 0; //dbg
-						#endif
+						if (markUnfiltered)
+							ddata3[(by*4)*dpitch3 + (bx-1)*4] = 0; //dbg					
 					} // if < PTHRE
 				}
 			}//if motion==1
@@ -691,9 +737,8 @@ void Cleaner::processPart(const VDXPixmap *pDst, CSquadWorker *sqworker)
 						ddata3[(by*4+y)*dpitch3 + bx*4 + x] = psrcV[x];
 					}//x
 				}//y
-				#ifdef SHOW_COPIED_BLOCKS
-				ddata3[(by*4)*dpitch3 + bx*4] = 0;//dbg
-				#endif
+				if (markUnfiltered)
+					ddata3[(by*4)*dpitch3 + bx*4] = 0;//dbg				
 			}
 	}//for bx
 
@@ -728,8 +773,10 @@ void Cleaner::processPart(const VDXPixmap *pDst, CSquadWorker *sqworker)
 			}
 		}
 	
+	SHOW(totalChanged);
 	if (totalChanged >= nbx * nby * GMTHRESHOLD) {
 		degrainInstead = true;
+		log("degrain = true");
 	} else {
 		if (haveLowerEdge) {
 			for(int y=nby*8; y<Y; y++)
