@@ -525,6 +525,17 @@ void Cleaner::process(VDXFBitmap *const *srcFrames, const VDXPixmap *dst, int nF
 		//prevFrame.copyFrom(*srcFrames[0]->mpPixmap, srcFrames[0]->mFrameNumber);		
 		//curFrame.copyFrom(*srcFrames[1]->mpPixmap, srcFrames[1]->mFrameNumber);		
 		//nextFrame.copyFrom(*srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);		
+		#ifdef DOLOG
+		log(" process: parallelCopy 3 input frames");
+		char str[1024];
+		sprintf(str, " srcFrames[0] pixmap=%X data=%X data2=%X", srcFrames[0]->mpPixmap, srcFrames[0]->mpPixmap->data, srcFrames[0]->mpPixmap->data2);
+		log(str);
+		sprintf(str, " srcFrames[1] pixmap=%X data=%X data2=%X", srcFrames[1]->mpPixmap, srcFrames[1]->mpPixmap->data, srcFrames[1]->mpPixmap->data2);
+		log(str);
+		sprintf(str, " srcFrames[2] pixmap=%X data=%X data2=%X", srcFrames[2]->mpPixmap, srcFrames[2]->mpPixmap->data, srcFrames[2]->mpPixmap->data2);
+		log(str);
+		#endif
+
 		parallelCopy(&prevFrame, srcFrames[0]->mpPixmap, srcFrames[0]->mFrameNumber);
 		parallelCopy(&curFrame, srcFrames[1]->mpPixmap, srcFrames[1]->mFrameNumber);
 		parallelCopy(&nextFrame, srcFrames[2]->mpPixmap, srcFrames[2]->mFrameNumber);
