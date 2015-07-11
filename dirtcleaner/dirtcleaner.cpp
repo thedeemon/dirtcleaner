@@ -223,7 +223,7 @@ INT_PTR CALLBACK SettingsDlgProc(HWND hdlg, UINT msg, WPARAM wParam, LPARAM lPar
 					EndDialog(hdlg, FALSE);
 					return TRUE;
 				case IDC_HOMEPAGE:
-					ShellExecute(NULL, NULL, L"http://www.infognition.com/", NULL, NULL, SW_SHOW);
+					ShellExecute(NULL, NULL, L"http://www.infognition.com/dirtcleaner/", NULL, NULL, SW_SHOW);
 					break;
 			}
 	}//switch msg
